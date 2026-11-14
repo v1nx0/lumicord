@@ -294,6 +294,25 @@ class Bar : AnimControl {
 
 class Canvas : Panel { public Canvas() { DoubleBuffered = true; SetStyle(ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint, true); } }
 
+// Display-only multiline text: no selection (mouse clicks/drags are ignored, so no blue highlight, no caret),
+// and the mouse wheel scrolls it (a TextBox with its scrollbar hidden does not react to the wheel by itself).
+class ReadOnlyText : TextBox {
+    [DllImport("user32.dll")] static extern int SendMessage(IntPtr h, int msg, int w, int l);
+    const int WM_SETFOCUS = 0x07, WM_MOUSEWHEEL = 0x20A, EM_LINESCROLL = 0xB6;
+    public ReadOnlyText() { Multiline = true; ReadOnly = true; TabStop = false; ScrollBars = ScrollBars.None; BorderStyle = BorderStyle.None; Cursor = Cursors.Default; }
+    protected override void WndProc(ref Message m) {
+        int msg = m.Msg;
+        if (msg >= 0x201 && msg <= 0x209) return; // left/right/middle button down, up, double-click: no selecting
+        if (msg == WM_SETFOCUS) return;           // never take focus, so no caret and no keyboard selection
+        if (msg == WM_MOUSEWHEEL) {
+            int delta = (short)((long)m.WParam >> 16);
+            SendMessage(Handle, EM_LINESCROLL, 0, -Math.Sign(delta) * 3);
+            return;
+        }
+        base.WndProc(ref m);
+    }
+}
+
 // Thin custom scrollbar for a multiline TextBox (whose own scrollbar is hidden): dark track, rounded pink thumb.
 // Reads the box's position with EM_GETFIRSTVISIBLELINE / EM_GETLINECOUNT and scrolls it with EM_LINESCROLL.
 class SlimScroll : AnimControl {
@@ -474,7 +493,7 @@ class Wizard : Form {
         Heading("doc", "License Agreement");
         var frame = new Canvas { Location = new Point(24, 60), Size = new Size(612, 220), BackColor = Theme.Surface, Padding = new Padding(14) };
         frame.Paint += (o, e) => { using (var p = new Pen(Theme.Border)) e.Graphics.DrawRectangle(p, 0, 0, frame.Width - 1, frame.Height - 1); };
-        var box = new TextBox {
+        var box = new ReadOnlyText {
             Multiline = true, ReadOnly = true, TabStop = false, ScrollBars = ScrollBars.None, BorderStyle = BorderStyle.None,
             BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.F(9.5f),
             Location = new Point(14, 14), Size = new Size(612 - 28 - 14, 220 - 28),
@@ -544,7 +563,7 @@ class Wizard : Form {
     void RunInstall() {
         var head = Heading("download", action == "uninstall" ? "Uninstalling" : action == "repair" ? "Repairing" : "Installing");
         var bar = new Bar { Location = new Point(24, 62), Target = 0.15f };
-        var log = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.None, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(600, 236) };
+        var log = new ReadOnlyText { BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(600, 236) };
         body.Controls.Add(bar); body.Controls.Add(log);
         body.Controls.Add(new SlimScroll(log) { Location = new Point(24 + 606, 82), Size = new Size(6, 236) });
         next.Enabled = false; next.Text = "Close";
@@ -628,8 +647,44 @@ class Wizard : Form {
             }
         }
 
+        // Start menu entry, so Windows search finds "Lumicord Installer". Failing here never fails the install.
+        try { if (action == "uninstall") RemoveStartMenuEntry(say); else AddStartMenuEntry(say); }
+        catch (Exception e) { say("Start menu shortcut skipped: " + e.Message); }
+
         var update = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(res)), "Update.exe");
         if (File.Exists(update)) { say("Starting Discord…"); Process.Start(update, "--processStart " + exe); }
+    }
+
+    static string StartMenuShortcut {
+        get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Lumicord Installer.lnk"); }
+    }
+
+    // Copies this installer into %APPDATA%\Lumicord (so the shortcut still works after the download is deleted)
+    // and creates a Start menu shortcut to it, using Windows' own WScript.Shell shortcut writer.
+    static void AddStartMenuEntry(Action<string> say) {
+        var self = Assembly.GetExecutingAssembly().Location;
+        var kept = Path.Combine(DataDir, "LumicordInstaller.exe");
+        if (!string.Equals(Path.GetFullPath(self), Path.GetFullPath(kept), StringComparison.OrdinalIgnoreCase)) {
+            Directory.CreateDirectory(DataDir);
+            File.Copy(self, kept, true);
+        }
+        var shellType = Type.GetTypeFromProgID("WScript.Shell");
+        object shell = Activator.CreateInstance(shellType);
+        try {
+            object link = shellType.InvokeMember("CreateShortcut", BindingFlags.InvokeMethod, null, shell, new object[] { StartMenuShortcut });
+            var lt = link.GetType();
+            lt.InvokeMember("TargetPath", BindingFlags.SetProperty, null, link, new object[] { kept });
+            lt.InvokeMember("WorkingDirectory", BindingFlags.SetProperty, null, link, new object[] { DataDir });
+            lt.InvokeMember("IconLocation", BindingFlags.SetProperty, null, link, new object[] { kept + ",0" });
+            lt.InvokeMember("Description", BindingFlags.SetProperty, null, link, new object[] { "Install, repair or uninstall Lumicord" });
+            lt.InvokeMember("Save", BindingFlags.InvokeMethod, null, link, null);
+            Marshal.ReleaseComObject(link);
+        } finally { Marshal.ReleaseComObject(shell); }
+        say("Added \"Lumicord Installer\" to the Start menu");
+    }
+
+    static void RemoveStartMenuEntry(Action<string> say) {
+        if (File.Exists(StartMenuShortcut)) { File.Delete(StartMenuShortcut); say("Removed the Start menu shortcut"); }
     }
 
     // Copies the bundled Lumicord files to %APPDATA%\Lumicord. Code is always updated; the user's theme and plugins are kept.
