@@ -920,7 +920,7 @@
                     h("div", { class: "lumi-card-title" }, h("span", { class: "lumi-name" }, "Lumicord"), h("span", { class: "lumi-ver" }, "v" + N.version())),
                     h("div", { class: "lumi-actions" }, checkBtn, updateBtn)),
                 status, notes,
-                h("div", { class: "lumi-card-foot" }, h("span", { class: "lumi-source" }, "Updates come from github.com/hello23113/lumicord releases"), h("span"))));
+                h("div", { class: "lumi-card-foot" }, h("span", { class: "lumi-source" }, "Updates come from github.com/v1nx0/lumicord releases"), h("span"))));
     }
 
     // Automatic check: 10 s after start, then every 6 hours. Shows a bar with Update / Later (once per version).

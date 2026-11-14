@@ -80,7 +80,7 @@ const safePath = p => {
 // Only files under src/ and vencord/ may be replaced; each is checked against its sha256 before anything is written.
 const crypto = require("crypto");
 const versionPath = path.join(root, "version.json");
-const versionInfo = () => readJSON(versionPath, { version: "0.0.0", repo: "hello23113/lumicord" });
+const versionInfo = () => readJSON(versionPath, { version: "0.0.0", repo: "v1nx0/lumicord" });
 const newer = (a, b) => { // is version a newer than b?
     const pa = String(a).replace(/^v/, "").split(".").map(Number), pb = String(b).replace(/^v/, "").split(".").map(Number);
     for (let i = 0; i < 3; i++) { if ((pa[i] || 0) > (pb[i] || 0)) return true; if ((pa[i] || 0) < (pb[i] || 0)) return false; }
