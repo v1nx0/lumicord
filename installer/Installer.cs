@@ -298,6 +298,12 @@ class Wizard : Form {
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern int SendMessage(IntPtr h, int msg, int w, int l);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
+    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(IntPtr h, string app, string idList);
+    // Windows' own dark style for a control's scrollbars (Windows 10 1809+); the default is a bright white bar.
+    static void DarkScrollbars(Control c) {
+        Action apply = () => { try { SetWindowTheme(c.Handle, "DarkMode_Explorer", null); } catch { } };
+        if (c.IsHandleCreated) apply(); else c.HandleCreated += (s, e) => apply();
+    }
 
     const int W = 660, H = 450;
     int step;
@@ -425,6 +431,7 @@ class Wizard : Form {
                    "This software is provided as is, without warranty of any kind."
         };
         frame.Controls.Add(box);
+        DarkScrollbars(box);
         var agree = new Check("I accept the license agreement") { Location = new Point(24, 292) };
         next.Enabled = false; agree.Changed += (o, e) => next.Enabled = agree.Checked;
         body.Controls.Add(frame); body.Controls.Add(agree);
@@ -483,6 +490,7 @@ class Wizard : Form {
         var bar = new Bar { Location = new Point(24, 62), Target = 0.15f };
         var log = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(612, 236) };
         body.Controls.Add(bar); body.Controls.Add(log);
+        DarkScrollbars(log);
         next.Enabled = false; next.Text = "Close";
         int lines = 0;
         Action<string> say = m => BeginInvoke((Action)(() => { log.AppendText(m + "\r\n"); lines++; bar.Target = Math.Min(0.92f, 0.15f + lines * 0.08f); }));

@@ -923,17 +923,51 @@
                 h("div", { class: "lumi-card-foot" }, h("span", { class: "lumi-source" }, "Updates come from github.com/v1nx0/lumicord releases"), h("span"))));
     }
 
-    // Automatic check: 10 s after start, then every 6 hours. Shows a bar with Update / Later (once per version).
+    // Custom update card (bottom-right): versions, release notes, Update/Later, progress, then Restart.
+    function showUpdateCard(i) {
+        const old = document.querySelector(".lumi-update-card");
+        if (old) old.remove();
+        const status = h("div", { class: "lumi-uc-status" });
+        const later = h("button", { class: "lumi-btn lumi-rb-later" }, "Later");
+        const go = h("button", { class: "lumi-btn lumi-primary" }, "Update now");
+        const card = h("div", { class: "lumi-update-card" },
+            h("div", { class: "lumi-uc-head" },
+                h("div", { class: "lumi-uc-icon" }, svg("update", 18)),
+                h("div", null,
+                    h("div", { class: "lumi-uc-title" }, "Lumicord update available"),
+                    h("div", { class: "lumi-uc-ver" }, h("span", null, "v" + i.current), h("span", { class: "lumi-uc-arrow" }, "→"), h("b", null, "v" + i.latest))),
+                h("button", { class: "lumi-uc-x", title: "Close", onClick: () => close() }, "✕")),
+            h("div", { class: "lumi-uc-notes" }, i.notes || "No release notes."),
+            status,
+            h("div", { class: "lumi-uc-actions" }, later, go));
+        const close = () => { card.classList.add("lumi-out"); setTimeout(() => card.remove(), 220); };
+        later.addEventListener("click", close);
+        go.addEventListener("click", async () => {
+            later.disabled = true; go.disabled = true; go.classList.add("lumi-loading"); go.textContent = "Updating";
+            status.textContent = "Downloading and checking the update…";
+            try {
+                const r = await N.applyUpdate();
+                go.classList.remove("lumi-loading");
+                status.textContent = `Updated to v${r.to}. Restart Discord to start using it.`;
+                card.classList.add("lumi-uc-done");
+                go.disabled = false; go.textContent = "Restart Discord";
+                go.onclick = () => { status.textContent = "Restarting Discord…"; N.relaunch(); };
+                later.disabled = false; later.textContent = "Later";
+            } catch (e) {
+                go.classList.remove("lumi-loading"); go.disabled = false; later.disabled = false; go.textContent = "Try again";
+                status.textContent = "Update failed: " + e.message + " (your current version was kept)";
+                card.classList.add("lumi-uc-error");
+            }
+        });
+        document.body.append(card);
+    }
+
+    // Automatic check: 10 s after start, then every 6 hours; each new version is offered once per session.
     let offeredVersion = null;
     const autoCheck = () => N.checkUpdate().then(i => {
         if (!i.available || i.latest === offeredVersion) return;
         offeredVersion = i.latest;
-        const bar = h("div", { class: "lumi-restart-bar lumi-update-bar" },
-            h("div", { class: "lumi-rb-icon" }, svg("update", 16)),
-            h("div", { class: "lumi-rb-text" }, `Lumicord v${i.latest} is available (you have v${i.current}).`),
-            h("button", { class: "lumi-btn lumi-rb-later", onClick: () => bar.remove() }, "Later"),
-            h("button", { class: "lumi-btn lumi-primary", onClick: e => { bar.remove(); runUpdate(); } }, "Update"));
-        document.body.append(bar);
+        showUpdateCard(i);
     }, e => log("update check failed:", e.message));
     setTimeout(autoCheck, 10000);
     setInterval(autoCheck, 6 * 60 * 60 * 1000);
@@ -1354,7 +1388,26 @@
       .lumi-preview-img{display:block;max-width:100%;border-radius:6px}
       .lumi-notes{white-space:pre-wrap;font-size:13px;color:var(--text-muted,#949ba4);margin:-6px 0 14px;max-height:260px;overflow:auto}
       .lumi-notes:empty{display:none}
-      .lumi-update-bar{bottom:84px}
+      .lumi-update-card{position:fixed;right:22px;bottom:22px;z-index:1005;width:340px;max-width:calc(100vw - 44px);
+        background:var(--background-floating,#111214);color:var(--text-normal,#dbdee1);border:1px solid var(--border-subtle,#ffffff14);
+        border-top:3px solid var(--lumi-accent);border-radius:10px;box-shadow:0 12px 36px #000a;padding:14px 14px 12px;
+        font-family:var(--font-primary,"gg sans",sans-serif);animation:lumi-ucin .35s cubic-bezier(.2,1.1,.3,1) both;transition:opacity .2s,transform .2s}
+      .lumi-update-card.lumi-out{opacity:0;transform:translateY(12px)}
+      @keyframes lumi-ucin{from{opacity:0;transform:translateY(18px) scale(.97)}to{opacity:1;transform:none}}
+      .lumi-uc-head{display:flex;align-items:center;gap:10px}
+      .lumi-uc-icon{width:34px;height:34px;flex-shrink:0;border-radius:8px;display:flex;align-items:center;justify-content:center;background:var(--lumi-accent);color:#fff}
+      .lumi-uc-title{font-weight:600;font-size:15px;color:var(--header-primary,#f2f3f5)}
+      .lumi-uc-ver{font-size:13px;color:var(--text-muted,#949ba4);display:flex;gap:6px;align-items:center}
+      .lumi-uc-ver b{color:var(--lumi-accent)}
+      .lumi-uc-arrow{opacity:.7}
+      .lumi-uc-x{margin-left:auto;align-self:flex-start;background:none;border:0;color:var(--interactive-normal,#b5bac1);cursor:pointer;font-size:13px;padding:2px 4px;border-radius:4px}
+      .lumi-uc-x:hover{color:var(--interactive-hover,#fff);background:var(--background-modifier-hover,#ffffff10)}
+      .lumi-uc-notes{margin:12px 0 0;padding:10px;max-height:150px;overflow:auto;white-space:pre-wrap;font-size:13px;line-height:1.4;
+        background:var(--background-secondary,#2b2d31);border-radius:6px;color:var(--text-normal,#dbdee1)}
+      .lumi-uc-status{font-size:12px;color:var(--text-muted,#949ba4);margin-top:8px;min-height:0}
+      .lumi-uc-status:empty{display:none}
+      .lumi-uc-done .lumi-uc-status{color:var(--lumi-accent)} .lumi-uc-error .lumi-uc-status{color:#f23f43}
+      .lumi-uc-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
       /* restart bar + toasts + modals */
       .lumi-restart-bar{background:var(--background-floating,#111214);backdrop-filter:none;border:1px solid var(--border-subtle,#ffffff14);box-shadow:0 8px 24px #0008;border-radius:8px}
       .lumi-rb-icon{background:var(--lumi-accent);animation:none}
