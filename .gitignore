@@ -1,0 +1,8 @@
+dist/
+LumicordInstaller.exe
+lumicord.log
+data/
+profiles/
+settings.json
+*.tmp
+installer/screenshot-*.png
