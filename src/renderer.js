@@ -1537,6 +1537,13 @@
       .lumi-uc-status:empty{display:none}
       .lumi-uc-done .lumi-uc-status{color:var(--lumi-accent)} .lumi-uc-error .lumi-uc-status{color:#f23f43}
       .lumi-uc-actions{display:flex;justify-content:flex-end;gap:8px;margin-top:12px}
+      /* thin pink scrollbars everywhere Lumicord scrolls (update card, notes, pop-ups, pages), like the installer */
+      .lumi-uc-notes,.lumi-notes,.lumi-modal-body,.lumi-overlay,.lumi-main,.lumi-settings-panel{scrollbar-width:thin;scrollbar-color:#ec4899aa transparent}
+      .lumi-uc-notes::-webkit-scrollbar,.lumi-notes::-webkit-scrollbar,.lumi-modal-body::-webkit-scrollbar,.lumi-overlay::-webkit-scrollbar,.lumi-main::-webkit-scrollbar{width:6px;height:6px}
+      .lumi-uc-notes::-webkit-scrollbar-track,.lumi-notes::-webkit-scrollbar-track,.lumi-modal-body::-webkit-scrollbar-track,.lumi-overlay::-webkit-scrollbar-track,.lumi-main::-webkit-scrollbar-track{background:#ffffff0e;border-radius:3px}
+      .lumi-uc-notes::-webkit-scrollbar-thumb,.lumi-notes::-webkit-scrollbar-thumb,.lumi-modal-body::-webkit-scrollbar-thumb,.lumi-overlay::-webkit-scrollbar-thumb,.lumi-main::-webkit-scrollbar-thumb{background:#ec489999;border-radius:3px}
+      .lumi-uc-notes::-webkit-scrollbar-thumb:hover,.lumi-notes::-webkit-scrollbar-thumb:hover,.lumi-modal-body::-webkit-scrollbar-thumb:hover,.lumi-overlay::-webkit-scrollbar-thumb:hover,.lumi-main::-webkit-scrollbar-thumb:hover{background:#ec4899}
+      .lumi-uc-notes::-webkit-scrollbar-button,.lumi-notes::-webkit-scrollbar-button,.lumi-modal-body::-webkit-scrollbar-button,.lumi-overlay::-webkit-scrollbar-button,.lumi-main::-webkit-scrollbar-button{display:none}
       /* restart bar + toasts + modals */
       .lumi-restart-bar{background:var(--background-floating,#111214);backdrop-filter:none;border:1px solid var(--border-subtle,#ffffff14);box-shadow:0 8px 24px #0008;border-radius:8px}
       .lumi-rb-icon{background:var(--lumi-accent);animation:none}

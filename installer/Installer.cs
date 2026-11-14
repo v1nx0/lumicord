@@ -294,16 +294,71 @@ class Bar : AnimControl {
 
 class Canvas : Panel { public Canvas() { DoubleBuffered = true; SetStyle(ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint, true); } }
 
+// Thin custom scrollbar for a multiline TextBox (whose own scrollbar is hidden): dark track, rounded pink thumb.
+// Reads the box's position with EM_GETFIRSTVISIBLELINE / EM_GETLINECOUNT and scrolls it with EM_LINESCROLL.
+class SlimScroll : AnimControl {
+    [DllImport("user32.dll")] static extern int SendMessage(IntPtr h, int msg, int w, int l);
+    const int EM_GETFIRSTVISIBLELINE = 0xCE, EM_GETLINECOUNT = 0xBA, EM_LINESCROLL = 0xB6;
+    readonly TextBox box;
+    int first, total, visible; bool dragging; float dragOffset;
+    public SlimScroll(TextBox target) {
+        box = target; Cursor = Cursors.Default;
+        box.MouseWheel += (s, e) => Invalidate();
+    }
+    protected override bool Animating {
+        get {
+            if (!box.IsHandleCreated) return false;
+            int f = SendMessage(box.Handle, EM_GETFIRSTVISIBLELINE, 0, 0);
+            int t = SendMessage(box.Handle, EM_GETLINECOUNT, 0, 0);
+            int v = Math.Max(1, box.ClientSize.Height / Math.Max(1, box.Font.Height));
+            bool changed = f != first || t != total || v != visible;
+            first = f; total = t; visible = v;
+            return changed || dragging;
+        }
+    }
+    int MaxFirst { get { return Math.Max(0, total - visible); } }
+    RectangleF Thumb {
+        get {
+            if (total <= visible) return RectangleF.Empty;
+            float h = Math.Max(28, Height * (float)visible / total);
+            float y = (Height - h) * Math.Min(1f, first / (float)Math.Max(1, MaxFirst));
+            return new RectangleF(1, y, Width - 2, h);
+        }
+    }
+    void ScrollTo(int line) {
+        line = Math.Max(0, Math.Min(MaxFirst, line));
+        if (line != first) SendMessage(box.Handle, EM_LINESCROLL, 0, line - first);
+    }
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.Clear(Parent.BackColor);
+        var thumb = Thumb;
+        if (thumb.IsEmpty) return; // nothing to scroll: no bar at all
+        float r = (Width - 2) / 2f;
+        using (var p = Theme.Round(new RectangleF(1, 0, Width - 2, Height - 1), r)) using (var b = new SolidBrush(Theme.Alpha(Color.White, 14))) g.FillPath(b, p);
+        var col = dragging ? Theme.Accent : Theme.Mix(Theme.Alpha(Theme.Accent, 150), Theme.Accent, hover);
+        using (var p = Theme.Round(thumb, r)) using (var b = new SolidBrush(col)) g.FillPath(b, p);
+    }
+    protected override void OnMouseDown(MouseEventArgs e) {
+        base.OnMouseDown(e);
+        var thumb = Thumb; if (thumb.IsEmpty) return;
+        if (thumb.Contains(e.Location)) { dragging = true; dragOffset = e.Y - thumb.Y; Capture = true; }
+        else ScrollTo(first + (e.Y < thumb.Y ? -visible : visible)); // click on the track: page up/down
+    }
+    protected override void OnMouseMove(MouseEventArgs e) {
+        base.OnMouseMove(e);
+        if (!dragging) return;
+        var thumb = Thumb; if (thumb.IsEmpty) return;
+        float range = Math.Max(1, Height - thumb.Height);
+        ScrollTo((int)Math.Round((e.Y - dragOffset) / range * MaxFirst));
+    }
+    protected override void OnMouseUp(MouseEventArgs e) { base.OnMouseUp(e); dragging = false; Capture = false; Invalidate(); }
+    protected override void OnMouseWheel(MouseEventArgs e) { base.OnMouseWheel(e); ScrollTo(first - Math.Sign(e.Delta) * 3); }
+}
+
 class Wizard : Form {
     [DllImport("user32.dll")] static extern bool ReleaseCapture();
     [DllImport("user32.dll")] static extern int SendMessage(IntPtr h, int msg, int w, int l);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
-    [DllImport("uxtheme.dll", CharSet = CharSet.Unicode)] static extern int SetWindowTheme(IntPtr h, string app, string idList);
-    // Windows' own dark style for a control's scrollbars (Windows 10 1809+); the default is a bright white bar.
-    static void DarkScrollbars(Control c) {
-        Action apply = () => { try { SetWindowTheme(c.Handle, "DarkMode_Explorer", null); } catch { } };
-        if (c.IsHandleCreated) apply(); else c.HandleCreated += (s, e) => apply();
-    }
 
     const int W = 660, H = 450;
     int step;
@@ -420,8 +475,9 @@ class Wizard : Form {
         var frame = new Canvas { Location = new Point(24, 60), Size = new Size(612, 220), BackColor = Theme.Surface, Padding = new Padding(14) };
         frame.Paint += (o, e) => { using (var p = new Pen(Theme.Border)) e.Graphics.DrawRectangle(p, 0, 0, frame.Width - 1, frame.Height - 1); };
         var box = new TextBox {
-            Multiline = true, ReadOnly = true, TabStop = false, ScrollBars = ScrollBars.Vertical, BorderStyle = BorderStyle.None,
-            BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.F(9.5f), Dock = DockStyle.Fill,
+            Multiline = true, ReadOnly = true, TabStop = false, ScrollBars = ScrollBars.None, BorderStyle = BorderStyle.None,
+            BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.F(9.5f),
+            Location = new Point(14, 14), Size = new Size(612 - 28 - 14, 220 - 28),
             Text = "Lumicord is a free, open source Discord client mod, licensed under the GNU GPL v3.0.\r\n\r\n" +
                    "• Client mods are against Discord's Terms of Service. Your account could be limited or banned. Use at your own risk.\r\n\r\n" +
                    "• Plugins run with the same access as Discord itself. Only install plugins you trust.\r\n\r\n" +
@@ -431,7 +487,7 @@ class Wizard : Form {
                    "This software is provided as is, without warranty of any kind."
         };
         frame.Controls.Add(box);
-        DarkScrollbars(box);
+        frame.Controls.Add(new SlimScroll(box) { Location = new Point(612 - 14 - 6, 14), Size = new Size(6, 220 - 28) });
         var agree = new Check("I accept the license agreement") { Location = new Point(24, 292) };
         next.Enabled = false; agree.Changed += (o, e) => next.Enabled = agree.Checked;
         body.Controls.Add(frame); body.Controls.Add(agree);
@@ -488,9 +544,9 @@ class Wizard : Form {
     void RunInstall() {
         var head = Heading("download", action == "uninstall" ? "Uninstalling" : action == "repair" ? "Repairing" : "Installing");
         var bar = new Bar { Location = new Point(24, 62), Target = 0.15f };
-        var log = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.Vertical, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(612, 236) };
+        var log = new TextBox { Multiline = true, ReadOnly = true, ScrollBars = ScrollBars.None, BorderStyle = BorderStyle.None, BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(600, 236) };
         body.Controls.Add(bar); body.Controls.Add(log);
-        DarkScrollbars(log);
+        body.Controls.Add(new SlimScroll(log) { Location = new Point(24 + 606, 82), Size = new Size(6, 236) });
         next.Enabled = false; next.Text = "Close";
         int lines = 0;
         Action<string> say = m => BeginInvoke((Action)(() => { log.AppendText(m + "\r\n"); lines++; bar.Target = Math.Min(0.92f, 0.15f + lines * 0.08f); }));
