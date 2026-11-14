@@ -216,7 +216,9 @@
     };
 
     const modal = (title, content, buttons) => {
-        const back = h("div", { class: "lumi-backdrop", onClick: e => { if (e.target === back) close(); } });
+        // Clicking outside counts as Cancel: plugins rely on their onCancel running (e.g. BDFDB's download prompt).
+        const cancelBtn = (buttons || []).find(b => !b.primary && !b.danger);
+        const back = h("div", { class: "lumi-backdrop", onClick: e => { if (e.target === back) { close(); if (cancelBtn && cancelBtn.onClick) cancelBtn.onClick(); } } });
         const body = h("div", { class: "lumi-modal-body" });
         const close = () => { if (body._lumiUnmount) body._lumiUnmount(); back.remove(); };
         const foot = h("div", { class: "lumi-modal-foot" }, (buttons || [{ label: "Okay", primary: true }]).map(b =>
@@ -257,7 +259,8 @@
             if (o.defaultExport && e.default) cands.push(e.default);
             if (o.searchExports && typeof e === "object") for (const k in e) { try { cands.push(e[k]); } catch { } }
             for (const c of cands) {
-                let hit = false; try { hit = c && filter(c, e, id); } catch { }
+                // same arguments as BetterDiscord: (exports, module, id)
+                let hit = false; try { hit = c && filter(c, r.c[id], id); } catch { }
                 if (hit) { if (o.first) return c; out.push(c); break; }
             }
         }
@@ -427,6 +430,54 @@
         };
     }
 
+    // ---------------------------------------------------------------- BdApi.UI.buildSettingsPanel
+    // BetterDiscord's settings builder: { settings: [{ type, id, name, note, value, ... }], onChange(category, id, value) }.
+    // Types: switch, dropdown, text, number, slider, radio, color, category (nested settings). Returns a DOM element.
+    function buildSettingsPanel(opts) {
+        const onChange = (opts && opts.onChange) || (() => { });
+        const row = (s, control, block) => h("div", { class: "lumi-sp-row" + (block ? " lumi-sp-block" : "") },
+            h("div", { class: "lumi-sp-text" }, h("div", { class: "lumi-name" }, s.name || s.id), s.note && h("div", { class: "lumi-desc" }, s.note)),
+            control);
+        const build = (s, cat) => {
+            const set = v => { s.value = v; try { onChange(cat, s.id, v); } catch (e) { console.error("[Lumicord] settings onChange", e); } };
+            switch (s.type) {
+                case "category": {
+                    const inner = h("div", { class: "lumi-sp-cat-body" }, (s.settings || []).map(x => build(x, s.id)));
+                    const head = h("button", { class: "lumi-sp-cat" + (s.collapsible === false || s.shown ? " open" : ""), onClick: () => head.classList.toggle("open") }, s.name || s.id);
+                    return h("div", { class: "lumi-sp-category" }, head, inner);
+                }
+                case "switch": {
+                    const sw = toggle(!!s.value, v => { sw.classList.toggle("on", v); set(v); });
+                    return row(s, sw);
+                }
+                case "dropdown": case "select": {
+                    const sel = h("select", { class: "lumi-input", onChange: e => set((s.options || [])[e.target.selectedIndex].value) },
+                        (s.options || []).map(o => h("option", { selected: o.value === s.value }, o.label)));
+                    return row(s, sel);
+                }
+                case "radio": {
+                    const name = "lumi-r-" + Math.random().toString(36).slice(2);
+                    return row(s, h("div", { class: "lumi-sp-radio" }, (s.options || []).map(o => h("label", null,
+                        h("input", { type: "radio", name, checked: o.value === s.value, onChange: () => set(o.value) }), " " + (o.name || o.label)))), true);
+                }
+                case "slider": {
+                    const out = h("span", { class: "lumi-sp-val" }, String(s.value));
+                    const input = h("input", { type: "range", class: "lumi-sp-slider", min: s.min != null ? s.min : 0, max: s.max != null ? s.max : 100,
+                        step: s.step != null ? s.step : ((s.max - s.min) <= 10 ? 0.1 : 1), value: s.value,
+                        onInput: e => { out.textContent = e.target.value; }, onChange: e => set(Number(e.target.value)) });
+                    return row(s, h("div", { class: "lumi-sp-slide" }, input, out), true);
+                }
+                case "number":
+                    return row(s, h("input", { class: "lumi-input", type: "number", value: s.value, min: s.min, max: s.max, onChange: e => set(Number(e.target.value)) }));
+                case "color":
+                    return row(s, h("input", { type: "color", value: s.value || "#000000", onChange: e => set(e.target.value) }));
+                default: // text and anything unknown
+                    return row(s, h("input", { class: "lumi-input", type: "text", value: s.value == null ? "" : s.value, placeholder: s.placeholder || "", onChange: e => set(e.target.value) }));
+            }
+        };
+        return h("div", { class: "lumi-settings-panel" }, ((opts && opts.settings) || []).map(s => build(s, null)));
+    }
+
     function BdApi(name) {
         if (!(this instanceof BdApi)) return new BdApi(name);
         // Bound API: plugin name is filled in automatically.
@@ -434,7 +485,7 @@
         this.Data = { load: k => Data.load(name, k), save: (k, v) => Data.save(name, k, v), delete: k => Data.delete(name, k) };
         this.DOM = Object.assign({}, BdApi.DOM, { addStyle: (id, css) => css === undefined ? addStyle(name, id) : addStyle(name + "-" + id, css), removeStyle: id => removeStyle(id ? name + "-" + id : name) });
         this.Logger = { log: (...a) => console.log(`[${name}]`, ...a), info: (...a) => console.info(`[${name}]`, ...a), warn: (...a) => console.warn(`[${name}]`, ...a), error: (...a) => console.error(`[${name}]`, ...a) };
-        for (const k of ["React", "ReactDOM", "Webpack", "UI", "Utils", "Plugins", "Themes", "Net", "version", "Components", "ContextMenu"]) Object.defineProperty(this, k, { get: () => BdApi[k] });
+        for (const k of ["React", "ReactDOM", "Webpack", "UI", "Utils", "Plugins", "Themes", "Net", "version", "Components", "ContextMenu", "Hooks", "ReactUtils"]) Object.defineProperty(this, k, { get: () => BdApi[k] });
     }
     Object.defineProperty(BdApi, "React", { get: Webpack.React });
     Object.defineProperty(BdApi, "ReactDOM", { get: Webpack.ReactDOM });
@@ -449,7 +500,21 @@
         },
         UI: {
             showToast: toast,
-            showNotice: (m, o) => { toast(m, o); return () => { }; },
+            // Sticky notice with optional buttons ({ label, onClick }); returns a function that closes it.
+            showNotice: (content, o) => {
+                o = o || {};
+                const close = () => { bar.classList.add("lumi-out"); setTimeout(() => bar.remove(), 250); };
+                const bar = h("div", { class: "lumi-restart-bar lumi-notice" },
+                    h("div", { class: "lumi-rb-text" }, typeof content === "string" ? content : (content && content.textContent) || ""),
+                    (o.buttons || []).map(b => h("button", { class: "lumi-btn lumi-primary", onClick: () => { try { b.onClick && b.onClick(); } finally { close(); } } }, b.label)),
+                    h("button", { class: "lumi-btn lumi-rb-later", onClick: close }, "Dismiss"));
+                document.body.append(bar);
+                if (o.timeout) setTimeout(close, o.timeout);
+                return close;
+            },
+            // BetterDiscord desktop notification card; shown as a toast with the title.
+            showNotification: n => { n = n || {}; toast((n.title ? n.title + ": " : "") + (typeof n.content === "string" ? n.content : ""), { type: n.type || "info", timeout: n.duration || 5000 }); return { close: () => { } }; },
+            buildSettingsPanel: buildSettingsPanel,
             alert: (title, content) => modal(title, content),
             showConfirmationModal: (title, content, o) => {
                 o = o || {};
@@ -478,7 +543,31 @@
             extend: Object.assign,
         },
         Net: { fetch: (...a) => netFetch(...a) }, // netFetch is defined further down
-        Components: {},
+        // Discord components exposed by Vencord (Tooltip is what plugins use most).
+        Components: { get Tooltip() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Tooltip; } },
+        Hooks: {
+            // re-renders the component whenever one of the stores changes; prefers Discord's own hook (via Vencord)
+            useStateFromStores(stores, getState, deps, areEqual) {
+                const C = window.Vencord && window.Vencord.Webpack.Common;
+                if (C && typeof C.useStateFromStores === "function") return C.useStateFromStores(stores, getState, deps, areEqual);
+                const R = Webpack.React();
+                const [state, setState] = R.useState(getState);
+                R.useEffect(() => {
+                    const update = () => setState(getState());
+                    stores.forEach(s => s.addChangeListener(update));
+                    update();
+                    return () => stores.forEach(s => s.removeChangeListener(update));
+                }, deps || []);
+                return state;
+            },
+        },
+        ReactUtils: {
+            getInternalInstance: el => { if (!el) return undefined; const k = Object.keys(el).find(x => x.startsWith("__reactFiber$") || x.startsWith("__reactInternalInstance$")); return k ? el[k] : undefined; },
+            getOwnerInstance(el) {
+                for (let f = BdApi.ReactUtils.getInternalInstance(el); f; f = f.return) if (f.stateNode && typeof f.stateNode.forceUpdate === "function") return f.stateNode;
+                return undefined;
+            },
+        },
         ContextMenu: contextMenuApi(),
         Plugins: addonApi("plugin"),
         Themes: addonApi("theme"),
@@ -493,8 +582,29 @@
         findModule: f => getModule(f), findAllModules: f => getModule(f, { first: false }),
         findModuleByProps: (...p) => Webpack.getByKeys(...p), findModuleByPrototypes: (...p) => Webpack.getByPrototypeKeys(...p),
         findModuleByDisplayName: n => getModule(Filters.byDisplayName(n)),
-        monkeyPatch: (obj, method, o) => patch(o.instead ? "instead" : o.before ? "before" : "after", "legacy", obj, method,
-            (self, args, ret) => (o.instead || o.before || o.after)({ thisObject: self, methodArguments: args, returnValue: ret, callOriginalMethod: () => ret })),
+        // Legacy monkeyPatch: the callback gets { thisObject, methodArguments, returnValue, callOriginalMethod }.
+        // Changes to methodArguments/returnValue are honoured, and callOriginalMethod really calls the original.
+        monkeyPatch: (obj, method, o) => {
+            const orig = obj && obj[method];
+            if (typeof orig !== "function") return () => { };
+            const wrapped = function () {
+                const d = { thisObject: this, methodArguments: Array.prototype.slice.call(arguments), returnValue: undefined };
+                d.callOriginalMethod = () => (d.returnValue = orig.apply(d.thisObject, d.methodArguments));
+                d.originalMethod = orig;
+                if (o.instead) { const r = o.instead(d); return r !== undefined ? r : d.returnValue; }
+                if (o.before) o.before(d);
+                d.callOriginalMethod();
+                if (o.after) o.after(d);
+                return d.returnValue;
+            };
+            Object.assign(wrapped, orig);
+            wrapped.toString = () => orig.toString();
+            obj[method] = wrapped;
+            const unpatch = () => { if (obj[method] === wrapped) obj[method] = orig; };
+            if (!patchMap.has("legacy")) patchMap.set("legacy", []);
+            patchMap.get("legacy").push(unpatch);
+            return unpatch;
+        },
     });
     window.BdApi = BdApi;
 
@@ -595,6 +705,8 @@
                 if (typeof P !== "function") throw new Error("Plugin does not export a class or function");
                 const isClass = /^class[\s{]/.test(Function.prototype.toString.call(P));
                 a.instance = isClass ? new P(a.meta) : P(a.meta);
+                // BetterDiscord runs load() when the plugin is loaded, even if it stays disabled
+                if (a.instance && typeof a.instance.load === "function") { try { a.instance.load(); } catch (e) { console.error("[Lumicord]", a.name, "load() failed", e); } a.loaded = true; }
             } else if (file.endsWith(".vc.js")) {
                 a.kind = "vencord";
                 const module = { exports: {} };
@@ -641,7 +753,7 @@
             else {
                 const i = a.instance;
                 if (on) {
-                    if (a.kind === "bd") { if (i.load && !a.loaded) { i.load(); a.loaded = true; } i.start && i.start(); }
+                    if (a.kind === "bd") i.start && i.start(); // load() already ran in loadPlugin
                     else if (a.kind === "vencord") i.start && i.start();
                     else i.start && i.start(api);
                 } else {
@@ -654,6 +766,8 @@
             console.error("[Lumicord]", a.name, e);
             toast(`${a.name} ${on ? "failed to start" : "failed to stop"}: ${e.message}`, { type: "error" });
             a.enabled = false;
+            // a plugin that crashed halfway through start() may already have patched Discord: undo that
+            if (on && a.type === "plugin") { Patcher.unpatchAll(a.name); try { a.instance && a.instance.stop && a.instance.stop(); } catch { } }
             if (on) return; // keep the user's choice saved; a temporary failure must not turn it off for good
         }
         (a.type === "theme" ? settings.themes : settings.plugins)[a.file] = a.enabled;
@@ -740,6 +854,7 @@
                 let card;
                 const sw = toggle(a.enabled, v => {
                     setEnabled(a, v); sw.classList.toggle("on", a.enabled); card.classList.toggle("lumi-on", a.enabled);
+                    const gear = card.querySelector(".lumi-gear"); if (gear) gear.style.display = a.enabled ? "" : "none";
                     // Like Vencord: plugins hook Discord as it loads, so offer a restart after turning one on or off.
                     // (Themes are plain CSS and apply instantly, so they don't need it.)
                     if (type === "plugin" && a.enabled === v)
@@ -749,7 +864,8 @@
                 const link = a.meta.source || a.meta.website;
                 const btns = h("div", { class: "lumi-actions" },
                     link && h("button", { class: "lumi-icon-btn", title: "Source", onClick: () => window.open(link, "_blank") }, svg("code", 18)),
-                    hasSettings(a) && h("button", { class: "lumi-icon-btn", title: "Settings", onClick: () => pluginSettingsPanel(a) }, svg("gear", 18)),
+                    // like BetterDiscord: settings only while the plugin is on (many plugins load their settings in start())
+                    hasSettings(a) && h("button", { class: "lumi-icon-btn lumi-gear", title: "Settings", style: { display: a.enabled ? "" : "none" }, onClick: () => pluginSettingsPanel(a) }, svg("gear", 18)),
                     h("button", { class: "lumi-icon-btn lumi-del", title: "Delete", onClick: () => modal("Delete " + a.name + "?", "This removes the file " + a.file + ".", [
                         { label: "Cancel" },
                         { label: "Delete", danger: true, onClick: () => { if (a.enabled) setEnabled(a, false); N.deleteAddon(type, a.file); addons[type] = addons[type].filter(x => x !== a); draw(); } },
@@ -1386,6 +1502,19 @@
       .lumi-tab.active{border-bottom-color:var(--lumi-accent)}
       .lumi-skeleton{height:118px;background:linear-gradient(90deg,#ffffff06 25%,#ffffff0e 50%,#ffffff06 75%);background-size:800px 100%}
       .lumi-preview-img{display:block;max-width:100%;border-radius:6px}
+      .lumi-settings-panel{display:flex;flex-direction:column}
+      .lumi-sp-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--border-subtle,#ffffff0f)}
+      .lumi-sp-row.lumi-sp-block{flex-direction:column;align-items:stretch}
+      .lumi-sp-text{min-width:0} .lumi-sp-text .lumi-desc{margin:4px 0 0}
+      .lumi-sp-row .lumi-input{min-width:180px}
+      .lumi-sp-slide{display:flex;align-items:center;gap:10px}
+      .lumi-sp-slider{flex:1;accent-color:var(--lumi-accent)}
+      .lumi-sp-val{min-width:42px;text-align:right;font-variant-numeric:tabular-nums;color:var(--text-muted,#949ba4)}
+      .lumi-sp-radio{display:flex;flex-direction:column;gap:6px} .lumi-sp-radio input{accent-color:var(--lumi-accent)}
+      .lumi-sp-cat{display:block;width:100%;text-align:left;background:none;border:0;padding:12px 0;font:inherit;font-weight:600;color:var(--header-primary,#f2f3f5);cursor:pointer;border-bottom:1px solid var(--border-subtle,#ffffff0f)}
+      .lumi-sp-cat::before{content:"▸ ";color:var(--text-muted,#949ba4)} .lumi-sp-cat.open::before{content:"▾ "}
+      .lumi-sp-cat:not(.open)+.lumi-sp-cat-body{display:none} .lumi-sp-cat-body{padding-left:12px}
+      .lumi-notice{bottom:84px}
       .lumi-notes{white-space:pre-wrap;font-size:13px;color:var(--text-muted,#949ba4);margin:-6px 0 14px;max-height:260px;overflow:auto}
       .lumi-notes:empty{display:none}
       .lumi-update-card{position:fixed;right:22px;bottom:22px;z-index:1005;width:340px;max-width:calc(100vw - 44px);
