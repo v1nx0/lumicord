@@ -434,7 +434,7 @@ class Wizard : Form {
         tips.SetToolTip(site, "Open the Lumicord folder"); tips.SetToolTip(code, "Open the plugins folder"); tips.SetToolTip(heart, "Credits");
         site.Click += (s, e) => { Directory.CreateDirectory(DataDir); Process.Start("explorer.exe", DataDir); };
         code.Click += (s, e) => { var p = Path.Combine(DataDir, "plugins"); Directory.CreateDirectory(p); Process.Start("explorer.exe", p); };
-        heart.Click += (s, e) => MessageBox.Show(this, "Lumicord — a free, open source Discord client mod (GPL-3.0).\n\nIncludes Vencord (github.com/Vendicated/Vencord), GPL-3.0.\nMarketplace addons come from the public BetterDiscord catalog.", "Credits");
+        heart.Click += (s, e) => ToggleCredits();
 
         back.Location = new Point(W - 24 - 96 - 10 - 96, 392); next.Location = new Point(W - 24 - 96, 392);
         back.Click += (s, e) => Show(step - 1);
@@ -487,6 +487,37 @@ class Wizard : Form {
         ic.Paint += (o, e) => Icons.Draw(e.Graphics, icon, new RectangleF(1, 1, 28, 28), Theme.Accent);
         var l = new Label { Text = t, Font = Theme.F(16, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(60, 13), AutoSize = true };
         body.Controls.Add(ic); body.Controls.Add(l); return l;
+    }
+
+    // Credits: an in-window panel over the current step (not a Windows message box), with clickable links.
+    Canvas credits;
+    void ToggleCredits() {
+        if (credits != null) { Controls.Remove(credits); credits.Dispose(); credits = null; return; }
+        credits = new Canvas { Location = new Point(0, 40), Size = new Size(W, 336), BackColor = Theme.Bg };
+        credits.Controls.Add(new Label { Text = "Credits", Font = Theme.F(16, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(24, 13), AutoSize = true });
+        credits.Controls.Add(new Label { Text = "Lumicord is built on these open source projects. Thank you!", Font = Theme.F(9.5f), ForeColor = Theme.Muted, Location = new Point(26, 48), AutoSize = true });
+        int y = 80;
+        Action<string, string[,], string, string, string> card = (name, by, repo, license, what) => {
+            var c = new Canvas { Location = new Point(24, y), Size = new Size(W - 48, 96), BackColor = Theme.Surface };
+            c.Paint += (o, e) => { using (var pen = new Pen(Theme.Border)) e.Graphics.DrawRectangle(pen, 0, 0, c.Width - 1, c.Height - 1); };
+            c.Controls.Add(new Label { Text = name, Font = Theme.F(11.5f, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(14, 10), AutoSize = true, BackColor = Theme.Surface });
+            c.Controls.Add(new Label { Text = what, Font = Theme.F(9), ForeColor = Theme.Muted, Location = new Point(14, 36), AutoSize = true, BackColor = Theme.Surface });
+            var links = new FlowLayoutPanel { Location = new Point(10, 62), Size = new Size(W - 48 - 20, 26), BackColor = Theme.Surface, WrapContents = false };
+            Action<string, string> add = (text, url) => {
+                var l = new LinkLabel { Text = text, Font = Theme.F(9.5f), AutoSize = true, LinkColor = Theme.Accent, ActiveLinkColor = Theme.Text, LinkBehavior = LinkBehavior.HoverUnderline, BackColor = Theme.Surface, Margin = new Padding(2, 0, 2, 0) };
+                l.LinkClicked += (o, e) => Process.Start(url); links.Controls.Add(l);
+            };
+            Action<string> txt = t => links.Controls.Add(new Label { Text = t, Font = Theme.F(9.5f), ForeColor = Theme.Muted, AutoSize = true, BackColor = Theme.Surface, Margin = new Padding(2, 0, 2, 0) });
+            txt("By");
+            for (int i = 0; i < by.GetLength(0); i++) { if (i > 0) txt(","); add(by[i, 0], by[i, 1]); }
+            txt("·"); add("GitHub", repo); txt("· " + license);
+            c.Controls.Add(links); credits.Controls.Add(c); y += 108;
+        };
+        card("Vencord", new[,] { { "Vendicated", "https://github.com/Vendicated" } }, "https://github.com/Vendicated/Vencord", "GPL-3.0", "Lumicord ships Vencord and its plugins.");
+        card("BetterDiscord", new[,] { { "Jiiks", "https://github.com/Jiiks" }, { "Zerebos", "https://github.com/zerebos" }, { "contributors", "https://github.com/BetterDiscord/BetterDiscord/graphs/contributors" } },
+             "https://github.com/BetterDiscord/BetterDiscord", "Apache-2.0", "Lumicord runs BetterDiscord plugins and themes through its own BdApi.");
+        credits.Controls.Add(new Label { Text = "Lumicord is not affiliated with Vencord, BetterDiscord or Discord.  Click the heart again to go back.", Font = Theme.F(8.5f), ForeColor = Theme.Muted, Location = new Point(26, y + 2), AutoSize = true });
+        Controls.Add(credits); credits.BringToFront();
     }
 
     void License() {
