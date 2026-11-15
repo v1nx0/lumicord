@@ -56,6 +56,8 @@ try {
         host = String(host).slice(0, 200).toLowerCase(); who = String(who || "A plugin").slice(0, 80);
         const known = access[host];
         if (known !== undefined) return known === true;
+        // A remembered Deny always wins over the global allow-all switch.
+        if (access["*"] === true) return true;
         if (asking.has(host)) return asking.get(host);
         const win = electron.BrowserWindow.fromWebContents(e.sender);
         const p = electron.dialog.showMessageBox(win, {
@@ -72,7 +74,22 @@ try {
         asking.set(host, p);
         return p;
     });
-    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_LIST", () => Object.assign({}, access));
+    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_LIST", () => {
+        const list = Object.assign({}, access); delete list["*"]; return list;
+    });
+    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_STATE", () => ({ allowAll: access["*"] === true }));
+    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_ALLOW_ALL", (e, on) => {
+        if (!on) { delete access["*"]; writeAccess(); return true; }
+        const win = electron.BrowserWindow.fromWebContents(e.sender);
+        return electron.dialog.showMessageBox(win, {
+            type: "warning", buttons: ["Allow all plugins", "Cancel"], defaultId: 1, cancelId: 1, noLink: true, title: "Lumicord",
+            message: "Allow every plugin to use your local network?",
+            detail: "Plugins will be able to connect to local apps, routers, and other devices without asking. Only enable this if you trust every installed plugin.",
+        }).then(r => {
+            if (r.response !== 0) return false;
+            access["*"] = true; writeAccess(); log("local access allow-all enabled"); return true;
+        });
+    });
     electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_FORGET", (_e, host) => {
         if (typeof host !== "string") return false;
         if (host === "*") { access = {}; writeAccess(); return true; }

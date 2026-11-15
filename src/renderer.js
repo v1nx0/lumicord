@@ -187,9 +187,11 @@
     const toast = (msg, opts) => {
         const type = (opts && opts.type) || "info";
         if (!toastBox || !toastBox.isConnected) { toastBox = h("div", { class: "lumi-toasts" }); document.body.append(toastBox); }
+        const c = (N.getSettings().custom || {}), pos = /^(bottom|top)-(left|right)$/.test(c.toastPosition) ? c.toastPosition : "bottom-right";
+        toastBox.className = "lumi-toasts lumi-toast-" + pos;
         const t = h("div", { class: "lumi-toast lumi-" + type }, String(msg));
         toastBox.append(t);
-        setTimeout(() => { t.classList.add("lumi-out"); setTimeout(() => t.remove(), 300); }, (opts && opts.timeout) || 3000);
+        setTimeout(() => { t.classList.add("lumi-out"); setTimeout(() => t.remove(), 300); }, (opts && opts.timeout) || Number(c.toastDuration) || 3000);
     };
 
     // Sticky "restart needed" bar (like Vencord's), shown after installing plugins.
@@ -884,7 +886,7 @@
         return t;
     };
     // Where an addon comes from, as plain gray text (no colored badges).
-    const badge = kind => h("span", { class: "lumi-source" }, { bd: "BetterDiscord", vencord: "Vencord", lumicord: "Lumicord" }[kind] + " addon");
+    const badge = kind => custom().showSources !== false && h("span", { class: "lumi-source" }, { bd: "BetterDiscord", vencord: "Vencord", lumicord: "Lumicord" }[kind] + " addon");
 
     function pluginSettingsPanel(a) {
         const i = a.instance;
@@ -917,7 +919,7 @@
         const draw = () => {
             list.textContent = "";
             const items = addons[type].filter(a => (a.name + " " + (a.meta.description || "")).toLowerCase().includes(q.value.toLowerCase()))
-                .sort((x, y) => x.name.localeCompare(y.name));
+                .sort((x, y) => custom().addonSort === "enabled" ? Number(y.enabled) - Number(x.enabled) || x.name.localeCompare(y.name) : x.name.localeCompare(y.name));
             if (!items.length) list.append(h("div", { class: "lumi-empty" }, addons[type].length ? "Nothing matches your search." : `No ${type}s yet. Get some from the Marketplace tab, or drop files into the ${type}s folder.`));
             let n = 0;
             for (const a of items) {
@@ -936,10 +938,14 @@
                     link && h("button", { class: "lumi-icon-btn", title: "Source", onClick: () => window.open(link, "_blank") }, svg("code", 18)),
                     // like BetterDiscord: settings only while the plugin is on (many plugins load their settings in start())
                     hasSettings(a) && h("button", { class: "lumi-icon-btn lumi-gear", title: "Settings", style: { display: a.enabled ? "" : "none" }, onClick: () => pluginSettingsPanel(a) }, svg("gear", 18)),
-                    h("button", { class: "lumi-icon-btn lumi-del", title: "Delete", onClick: () => modal("Delete " + a.name + "?", "This removes the file " + a.file + ".", [
+                    h("button", { class: "lumi-icon-btn lumi-del", title: "Delete", onClick: () => {
+                        const remove = () => { if (a.enabled) setEnabled(a, false); N.deleteAddon(type, a.file); addons[type] = addons[type].filter(x => x !== a); draw(); };
+                        if (custom().confirmDelete === false) return remove();
+                        modal("Delete " + a.name + "?", "This removes the file " + a.file + ".", [
                         { label: "Cancel" },
-                        { label: "Delete", danger: true, onClick: () => { if (a.enabled) setEnabled(a, false); N.deleteAddon(type, a.file); addons[type] = addons[type].filter(x => x !== a); draw(); } },
-                    ]) }, svg("trash", 18)));
+                        { label: "Delete", danger: true, onClick: remove },
+                    ]);
+                    } }, svg("trash", 18)));
                 list.append(card = h("div", { class: "lumi-card lumi-anim" + (a.enabled ? " lumi-on" : "") + (a.error ? " lumi-broken" : ""), style: { animationDelay: Math.min(n++ * 30, 300) + "ms" } },
                     h("div", { class: "lumi-card-top" },
                         h("div", { class: "lumi-card-title" },
@@ -999,7 +1005,7 @@
                     } catch (e) { btn.disabled = false; btn.classList.remove("lumi-loading"); btn.textContent = "Install"; toast("Install failed: " + e.message, { type: "error" }); }
                 });
                 // Same card layout as the installed list: title line + action, description, footer.
-                const preview = a.thumbnail && h("button", { class: "lumi-icon-btn", title: "Preview", onClick: () => {
+                const preview = custom().showThumbnails !== false && a.thumbnail && h("button", { class: "lumi-icon-btn", title: "Preview", onClick: () => {
                     const img = h("img", { src: a.thumbnail, alt: a.name + " preview", class: "lumi-preview-img" });
                     img.onerror = () => img.replaceWith("No preview image available.");
                     modal(a.name, img, [{ label: "Close" }]);
@@ -1011,6 +1017,7 @@
                             a.version && h("span", { class: "lumi-ver" }, "v" + a.version),
                             h("span", { class: "lumi-author" }, "by " + a.author)),
                         btn),
+                    custom().showThumbnails !== false && a.thumbnail && h("img", { class: "lumi-market-thumb", src: a.thumbnail, alt: "", onError: e => e.currentTarget.remove() }),
                     h("div", { class: "lumi-desc lumi-clamp" }, a.description || "No description."),
                     h("div", { class: "lumi-card-foot" },
                         h("span", { class: "lumi-source" }, `${a.downloads.toLocaleString()} downloads · ${a.likes.toLocaleString()} likes`),
@@ -1150,7 +1157,7 @@
         document.body.append(card);
     }
 
-    // Automatic check: 10 s after start, then every 6 hours; each new version is offered once per session.
+    // Automatic checks use the selected interval; each new version is offered once per session.
     let offeredVersion = null;
     const autoCheck = () => N.checkUpdate().then(i => {
         if (!i.available || i.latest === offeredVersion) return;
@@ -1159,33 +1166,61 @@
     }, e => log("update check failed:", e.message));
     const custom = () => N.getSettings().custom || {};
     const autoCheckIfOn = () => { if (custom().autoUpdate !== false) autoCheck(); };
+    let autoCheckTimer;
+    const scheduleAutoCheck = () => {
+        clearInterval(autoCheckTimer);
+        const hours = [1, 6, 24].includes(Number(custom().updateInterval)) ? Number(custom().updateInterval) : 6;
+        autoCheckTimer = setInterval(autoCheckIfOn, hours * 60 * 60 * 1000);
+    };
     setTimeout(autoCheckIfOn, 10000);
-    setInterval(autoCheckIfOn, 6 * 60 * 60 * 1000);
+    scheduleAutoCheck();
 
     // ---------------------------------------------------------------- Lumicord settings (settings.json "custom")
-    const DEFAULT_CUSTOM = { accent: "#ec4899", radius: 8, animations: true, customCSS: "", autoUpdate: true };
+    const DEFAULT_CUSTOM = { accent: "#ec4899", hover: "#f063a9", radius: 8, fontScale: 100, pageWidth: "normal", density: "comfortable", animations: true, showSources: true, showThumbnails: true, addonSort: "name", confirmDelete: true, toastPosition: "bottom-right", toastDuration: 3000, autoUpdate: true, updateInterval: 6, showMarketplace: true, customCSS: "" };
     const ACCENTS = ["#ec4899", "#9b7bff", "#5865f2", "#23a55a", "#f0b232", "#f23f43", "#00a8fc"];
+    const color = v => typeof v === "string" && /^#[0-9a-f]{6}$/i.test(v);
+    const normalizeCustom = value => {
+        const v = value && typeof value === "object" && !Array.isArray(value) ? value : {}, out = {};
+        for (const k in DEFAULT_CUSTOM) {
+            const x = v[k], d = DEFAULT_CUSTOM[k];
+            if (x !== undefined && ((typeof d === "boolean" && typeof x === "boolean") || (typeof d === "string" && typeof x === "string") || (typeof d === "number" && typeof x === "number" && Number.isFinite(x)))) out[k] = x;
+        }
+        if (out.accent && !color(out.accent)) delete out.accent;
+        if (out.hover && !color(out.hover)) delete out.hover;
+        if (out.radius != null) out.radius = Math.max(0, Math.min(16, out.radius));
+        if (out.fontScale != null) out.fontScale = Math.max(80, Math.min(125, out.fontScale));
+        if (out.toastDuration != null) out.toastDuration = Math.max(1000, Math.min(10000, out.toastDuration));
+        if (out.updateInterval != null && ![1, 6, 24].includes(out.updateInterval)) delete out.updateInterval;
+        for (const [k, allowed] of Object.entries({ pageWidth: ["narrow", "normal", "wide"], density: ["comfortable", "compact"], addonSort: ["name", "enabled"], toastPosition: ["bottom-right", "bottom-left", "top-right", "top-left"] })) if (out[k] && !allowed.includes(out[k])) delete out[k];
+        return out;
+    };
     function applyCustom() {
         const c = Object.assign({}, DEFAULT_CUSTOM, custom());
         const accent = /^#[0-9a-f]{6}$/i.test(c.accent) ? c.accent : DEFAULT_CUSTOM.accent;
+        const hover = color(c.hover) ? c.hover : accent + "cc";
         const r = Math.max(0, Math.min(16, Number(c.radius) || 0));
-        addStyle("lumicord-custom", `:root{--lumi-accent:${accent};--lumi-accent-hover:${accent}cc}
+        addStyle("lumicord-custom", `:root{--lumi-accent:${accent};--lumi-accent-hover:${hover}}
           .lumi-card,.lumi-btn,.lumi-input,.lumi-modal,.lumi-toast{border-radius:${r}px!important}
+          .lumi-page{max-width:${({ narrow: 620, normal: 760, wide: 1040 }[c.pageWidth] || 760)}px;font-size:${Math.max(80, Math.min(125, Number(c.fontScale) || 100))}%}
+          ${c.density === "compact" ? ".lumi-card{padding:10px 12px 0}.lumi-card-foot{margin:0 -12px;padding:6px 8px 6px 12px}.lumi-desc{margin:5px 0 9px}" : ""}
+          ${c.showSources ? "" : ".lumi-source{display:none!important}"}
           ${c.animations ? "" : ".lumi-page *,.lumi-modal *,.lumi-toast{animation:none!important;transition:none!important}"}`);
         addStyle("lumicord-usercss", String(c.customCSS || ""));
     }
-    const setCustom = patch => { const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, patch); N.setSettings(cur); applyCustom(); };
+    const setCustom = patch => { const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, normalizeCustom(patch)); N.setSettings(cur); applyCustom(); if (patch.updateInterval != null) scheduleAutoCheck(); };
 
     function settingsPage() {
         const c = Object.assign({}, DEFAULT_CUSTOM, custom());
         const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
         const sw = (on, fn) => { const t = toggle(on, v => { t.classList.toggle("on", v); t.setAttribute("aria-checked", String(v)); fn(v); }); return t; };
         const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card" }, h("div", { class: "lumi-set-title" }, title), ...rows);
+        const select = (value, options, key) => h("select", { class: "lumi-input", onChange: e => setCustom({ [key]: /^(1|6|24|1000|3000|5000|10000)$/.test(e.target.value) ? Number(e.target.value) : e.target.value }) }, options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value) }, label)));
 
         const color = h("input", { type: "color", class: "lumi-color", value: c.accent, onInput: e => setCustom({ accent: e.target.value }) });
         const swatches = h("div", { class: "lumi-swatches" }, ACCENTS.map(a => h("button", { class: "lumi-swatch", title: a, style: { background: a }, onClick: () => { color.value = a; setCustom({ accent: a }); } })), color);
         const radiusVal = h("span", { class: "lumi-sp-val" }, c.radius + "px");
         const radius = h("input", { type: "range", class: "lumi-sp-slider", min: 0, max: 16, value: c.radius, onInput: e => { radiusVal.textContent = e.target.value + "px"; setCustom({ radius: Number(e.target.value) }); } });
+        const scale = h("input", { type: "range", class: "lumi-sp-slider", min: 80, max: 125, value: c.fontScale, onInput: e => setCustom({ fontScale: Number(e.target.value) }) });
 
         let cssTimer;
         const css = h("textarea", { class: "lumi-input lumi-css", spellcheck: false, placeholder: "/* Your CSS, applied live on top of Discord and themes */", value: c.customCSS,
@@ -1195,8 +1230,12 @@
         const drawNet = async () => {
             net.textContent = "";
             if (!N.localAccess) return net.append(h("div", { class: "lumi-desc" }, "Restart Discord to manage saved choices."));
+            const state = await N.localAccess.state().catch(() => ({ allowAll: false }));
+            let all;
+            all = sw(!!state.allowAll, async v => { const ok = await N.localAccess.allowAll(v).catch(() => false); all.classList.toggle("on", ok && v); if (!ok && v) toast("Local network access was not enabled", { type: "warning" }); });
+            net.append(row("Let all plugins use the local network without asking", "Requires a native confirmation. Saved Deny choices still block that host.", all));
             const list = Object.entries(await N.localAccess.list().catch(() => ({})));
-            if (!list.length) return net.append(h("div", { class: "lumi-desc" }, "No saved choices. Plugins that try to reach your local network will ask first."));
+            if (!list.length) return net.append(h("div", { class: "lumi-desc" }, "No saved per-host choices. Plugins that try to reach your local network will ask first."));
             list.forEach(([host, ok]) => net.append(row(host, ok ? "Allowed" : "Denied",
                 h("button", { class: "lumi-btn", onClick: () => N.localAccess.forget(host).then(drawNet) }, "Forget"))));
             net.append(h("button", { class: "lumi-btn", style: { marginTop: "10px" }, onClick: () => N.localAccess.forget("*").then(drawNet) }, "Forget all"));
@@ -1206,17 +1245,32 @@
         return h("div", null,
             section("Appearance",
                 row("Accent color", "Used for buttons, switches and highlights in Lumicord.", swatches),
+                row("Hover color", "Used when hovering Lumicord controls.", h("input", { type: "color", class: "lumi-color", value: c.hover, onInput: e => setCustom({ hover: e.target.value }) })),
                 row("Corner roundness", null, h("div", { class: "lumi-set-slider" }, radius, radiusVal)),
-                row("Animations", "Turn off for a calmer, faster feel.", sw(c.animations, v => setCustom({ animations: v })))),
+                row("Font size", "Scale Lumicord pages only.", scale),
+                row("Page width", null, select(c.pageWidth, [["narrow", "Narrow"], ["normal", "Normal"], ["wide", "Wide"]], "pageWidth")),
+                row("Card density", null, select(c.density, [["comfortable", "Comfortable"], ["compact", "Compact"]], "density")),
+                row("Animations", "Turn off for a calmer, faster feel.", sw(c.animations, v => setCustom({ animations: v }))),
+                row("Show addon source labels", null, sw(c.showSources, v => setCustom({ showSources: v }))),
+                row("Show Marketplace thumbnails", null, sw(c.showThumbnails, v => setCustom({ showThumbnails: v })))),
             section("Custom CSS", h("div", { class: "lumi-desc" }, "Small tweaks without making a theme. Saved automatically."), css),
-            section("General",
+            section("Behavior",
+                row("Default addon sort", null, select(c.addonSort, [["name", "Name"], ["enabled", "Enabled first"]], "addonSort")),
+                row("Confirm before deleting addons", null, sw(c.confirmDelete, v => setCustom({ confirmDelete: v }))),
+                row("Toast position", null, select(c.toastPosition, [["bottom-right", "Bottom right"], ["bottom-left", "Bottom left"], ["top-right", "Top right"], ["top-left", "Top left"]], "toastPosition")),
+                row("Toast duration", null, select(c.toastDuration, [[1000, "1 second"], [3000, "3 seconds"], [5000, "5 seconds"], [10000, "10 seconds"]], "toastDuration"))),
+            section("Sidebar & updates",
                 row("Lumicord in the settings sidebar", "Show the Lumicord section in Discord's settings list. Takes effect after a restart.",
                     sw(N.getSettings().nativeSidebar !== false, v => { const cur = N.getSettings(); cur.nativeSidebar = v; N.setSettings(cur); })),
-                row("Check for updates automatically", "Every 6 hours. You can always check on the Updater page.", sw(c.autoUpdate, v => setCustom({ autoUpdate: v }))),
+                row("Show Marketplace page", "Takes effect when Lumicord navigation is next opened.", sw(c.showMarketplace, v => setCustom({ showMarketplace: v }))),
+                row("Check for updates automatically", null, sw(c.autoUpdate, v => setCustom({ autoUpdate: v }))),
+                row("Update check interval", null, select(c.updateInterval, [[1, "Every hour"], [6, "Every 6 hours"], [24, "Every 24 hours"]], "updateInterval")),
                 row("Addon folders", null, h("div", { class: "lumi-actions" },
                     h("button", { class: "lumi-btn", onClick: () => N.openFolder("plugin") }, "Plugins folder"),
                     h("button", { class: "lumi-btn", onClick: () => N.openFolder("theme") }, "Themes folder")))),
             section("Local network access", h("div", { class: "lumi-desc" }, "Choices you saved with \"Remember my choice\"."), net),
+            section("Import & export", row("Export settings", "Download your Lumicord customization.", h("button", { class: "lumi-btn", onClick: () => { const a = h("a", { href: URL.createObjectURL(new Blob([JSON.stringify(Object.assign({}, DEFAULT_CUSTOM, custom()), null, 2)], { type: "application/json" })), download: "lumicord-settings.json" }); a.click(); setTimeout(() => URL.revokeObjectURL(a.href), 0); } }, "Export")),
+                row("Import settings", "Only recognized, valid settings are applied.", (() => { const input = h("input", { type: "file", accept: "application/json", style: { display: "none" } }); const b = h("button", { class: "lumi-btn", onClick: () => input.click() }, "Import"); input.onchange = () => { const f = input.files[0]; if (!f) return; f.text().then(JSON.parse).then(v => { const clean = normalizeCustom(v); if (!Object.keys(clean).length && Object.keys(v || {}).length) throw new Error("No valid settings found"); const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, clean); N.setSettings(cur); applyCustom(); scheduleAutoCheck(); toast("Settings imported", { type: "success" }); }).catch(e => toast("Import failed: " + e.message, { type: "error" })); }; return h("div", null, input, b); })())),
             h("button", { class: "lumi-btn", onClick: () => BdApi.UI.showConfirmationModal("Reset settings", "Reset appearance, custom CSS and general options to their defaults?", { danger: true, confirmText: "Reset",
                 onConfirm: () => { const cur = N.getSettings(); delete cur.custom; N.setSettings(cur); applyCustom(); toast("Settings reset"); } }) }, "Reset to defaults"));
     }
@@ -1228,6 +1282,7 @@
         updater: { label: "Updater", icon: "update", render: updaterPage },
         settings: { label: "Settings", icon: "gear", render: settingsPage },
     };
+    const visiblePages = () => Object.keys(PAGES).filter(k => k !== "marketplace" || custom().showMarketplace !== false);
     const pageContent = key => h("div", { class: "lumi-page" }, h("h1", { class: "lumi-h1" }, PAGES[key].label), PAGES[key].render());
 
     // ---------------------------------------------------------------- sidebar injection
@@ -1296,7 +1351,7 @@
         const textPath = [];
         for (let n = textEl; n && n !== item; n = n.parentElement) textPath.unshift([...n.parentElement.childNodes].indexOf(n));
         const itemsBox = list.cloneNode(false);
-        for (const key of Object.keys(PAGES)) {
+        for (const key of visiblePages()) {
             const c = item.cloneNode(true);
             c.removeAttribute("id"); c.removeAttribute("aria-controls"); c.setAttribute("aria-selected", "false");
             c.className = String(c.className).split(" ").filter(x => !/selected|active/i.test(x)).join(" ");
@@ -1347,7 +1402,7 @@
             activeKey = k; main.textContent = ""; main.append(pageContent(k));
             [...nav.querySelectorAll(".lumi-nav-item")].forEach(b => b.classList.toggle("active", b.dataset.k === k));
         };
-        for (const k of Object.keys(PAGES)) { const b = h("button", { class: "lumi-nav-item", onClick: () => show(k) }, svg(PAGES[k].icon, 18), PAGES[k].label); b.dataset.k = k; nav.append(b); }
+        for (const k of visiblePages()) { const b = h("button", { class: "lumi-nav-item", onClick: () => show(k) }, svg(PAGES[k].icon, 18), PAGES[k].label); b.dataset.k = k; nav.append(b); }
         overlay.append(h("button", { class: "lumi-close", title: "Close (Esc)", onClick: closeOverlay }, "✕"), h("div", { class: "lumi-shell" }, nav, main));
         document.body.append(overlay);
         show(activeKey);
@@ -1483,7 +1538,7 @@
                 buildLayout: () => [panel],
             };
         };
-        return { key: "lumicord_section", type: T.SECTION, useTitle: () => "Lumicord", buildLayout: () => Object.keys(PAGES).map(entry) };
+        return { key: "lumicord_section", type: T.SECTION, useTitle: () => "Lumicord", buildLayout: () => visiblePages().map(entry) };
     };
     // With Vencord: its Settings plugin already rewrote Discord's settings code to call its own buildLayout.
     // Wrap that method so our section is added next to Vencord's.
@@ -1636,6 +1691,7 @@
       .lumi-tab.active{border-bottom-color:var(--lumi-accent)}
       .lumi-skeleton{height:118px;background:linear-gradient(90deg,#ffffff06 25%,#ffffff0e 50%,#ffffff06 75%);background-size:800px 100%}
       .lumi-preview-img{display:block;max-width:100%;border-radius:6px}
+      .lumi-market-thumb{display:block;width:100%;max-height:180px;object-fit:cover;margin:12px 0 0;border-radius:6px}
       .lumi-settings-panel{display:flex;flex-direction:column}
       .lumi-sp-row{display:flex;align-items:center;justify-content:space-between;gap:16px;padding:12px 0;border-bottom:1px solid var(--border-subtle,#ffffff0f)}
       .lumi-sp-row.lumi-sp-block{flex-direction:column;align-items:stretch}

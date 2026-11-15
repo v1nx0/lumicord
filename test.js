@@ -10,18 +10,49 @@ const { findResources, install, uninstall } = require("./install");
     const end = patcher.indexOf("// Discord's page Content-Security-Policy", start);
     const handlers = {};
     const writes = [];
+    let dialogResponse = 0;
     vm.runInNewContext(`(() => {${patcher.slice(start, end)}; })()`, {
         __dirname: "root/src", path: { join: (...parts) => parts.join("/") },
         fs: { readFileSync: () => '{"router":true,"nas":false}', writeFileSync: (_file, value) => writes.push(JSON.parse(value)) },
-        electron: { ipcMain: { handle: (name, fn) => { handlers[name] = fn; } } }, log: () => { }, Map,
+        electron: { ipcMain: { handle: (name, fn) => { handlers[name] = fn; } }, BrowserWindow: { fromWebContents: () => ({}) }, dialog: { showMessageBox: () => Promise.resolve({ response: dialogResponse, checkboxChecked: true }) } }, log: () => { }, Map,
     });
     assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), { router: true, nas: false });
     assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_FORGET(null, "router"), true);
     assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), { nas: false });
-    assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_FORGET(null, "*"), true);
-    assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), {});
-    assert.deepStrictEqual(writes, [{ nas: false }, {}]);
+    handlers.LUMICORD_LOCAL_ACCESS_ALLOW_ALL({ sender: {} }, true).then(ok => {
+        assert.strictEqual(ok, true, "allow-all only enables after native confirmation");
+        assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_STATE().allowAll, true);
+        return Promise.all([
+            handlers.LUMICORD_LOCAL_ACCESS({ sender: {} }, "nas", "test"),
+            handlers.LUMICORD_LOCAL_ACCESS({ sender: {} }, "newhost", "test"),
+        ]);
+    }).then(([denied, allowed]) => {
+        assert.strictEqual(denied, false, "explicit deny wins over allow-all");
+        assert.strictEqual(allowed, true);
+        return handlers.LUMICORD_LOCAL_ACCESS_ALLOW_ALL({ sender: {} }, false);
+    }).then(() => {
+        assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_STATE().allowAll, false, "allow-all can be disabled without confirmation");
+        dialogResponse = 1;
+        return handlers.LUMICORD_LOCAL_ACCESS_ALLOW_ALL({ sender: {} }, true);
+    }).then(ok => {
+        assert.strictEqual(ok, false, "cancelling the native warning does not enable allow-all");
+        assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_STATE().allowAll, false);
+        assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_FORGET(null, "*"), true);
+        assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), {});
+        console.log("local access allow-all test passed");
+    }).catch(e => { process.exitCode = 1; throw e; });
     console.log("local access management test passed");
+}
+
+// Import accepts only recognized custom settings with valid values.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    const DEFAULT_CUSTOM = ");
+    const end = renderer.indexOf("    function applyCustom()", start);
+    const normalizeCustom = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return normalizeCustom; })()`);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(normalizeCustom({ accent: "#123456", updateInterval: 24, unknown: true }))), { accent: "#123456", updateInterval: 24 });
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(normalizeCustom({ accent: "red", toastDuration: "fast", pageWidth: "huge" }))), {});
+    console.log("custom settings import validation test passed");
 }
 
 // Run the renderer's actual Patcher in isolation: out-of-order unpatching must not revive a stopped plugin.

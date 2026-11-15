@@ -218,6 +218,8 @@ if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
     localAccess: {
         list: () => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_LIST"),
         forget: host => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_FORGET", String(host)),
+        state: () => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_STATE"),
+        allowAll: on => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_ALLOW_ALL", !!on),
     },
     log: (...a) => logLine("renderer", ...a.map(x => typeof x === "string" ? x : JSON.stringify(x))),
     getSettings: () => readJSON(settingsPath, {}),
