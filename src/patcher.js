@@ -47,12 +47,14 @@ catch (e) { log("relaunch handler failed", e && e.message); }
 // the page cannot fake or click for itself; remember the answer per address in local-access.json (outside the
 // folders plugins can write).
 const accessFile = path.join(__dirname, "..", "local-access.json");
-const readAccess = () => { try { return JSON.parse(fs.readFileSync(accessFile, "utf8")); } catch { return {}; } };
+const readAccess = () => { try { const access = JSON.parse(fs.readFileSync(accessFile, "utf8")); return access && typeof access === "object" && !Array.isArray(access) ? access : {}; } catch { return {}; } };
+let access = readAccess();
+const writeAccess = () => fs.writeFileSync(accessFile, JSON.stringify(access, null, 2));
 const asking = new Map(); // one dialog per address, even if a plugin fires many requests
 try {
     electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS", (e, host, who) => {
         host = String(host).slice(0, 200).toLowerCase(); who = String(who || "A plugin").slice(0, 80);
-        const known = readAccess()[host];
+        const known = access[host];
         if (known !== undefined) return known === true;
         if (asking.has(host)) return asking.get(host);
         const win = electron.BrowserWindow.fromWebContents(e.sender);
@@ -63,12 +65,20 @@ try {
             checkboxLabel: "Remember my choice", checkboxChecked: true,
         }).then(r => {
             const ok = r.response === 0;
-            if (r.checkboxChecked) { const a = readAccess(); a[host] = ok; fs.writeFileSync(accessFile, JSON.stringify(a, null, 2)); }
+            if (r.checkboxChecked) { access[host] = ok; writeAccess(); }
             log("local access", host, who, ok ? "allowed" : "denied");
             return ok;
         }).finally(() => asking.delete(host));
         asking.set(host, p);
         return p;
+    });
+    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_LIST", () => Object.assign({}, access));
+    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS_FORGET", (_e, host) => {
+        if (typeof host !== "string") return false;
+        if (host === "*") { access = {}; writeAccess(); return true; }
+        host = host.slice(0, 200).toLowerCase();
+        if (Object.prototype.hasOwnProperty.call(access, host)) { delete access[host]; writeAccess(); }
+        return true;
     });
 } catch (e) { log("local access handler failed", e && e.message); }
 

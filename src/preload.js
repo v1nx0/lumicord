@@ -215,6 +215,10 @@ if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
         return { status: r.status, statusText: r.statusText, headers: r.headers, body: r.body.toString("utf8") };
     },
     relaunch: () => ipcRenderer.invoke("LUMICORD_RELAUNCH").catch(() => location.reload()),
+    localAccess: {
+        list: () => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_LIST"),
+        forget: host => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_FORGET", String(host)),
+    },
     log: (...a) => logLine("renderer", ...a.map(x => typeof x === "string" ? x : JSON.stringify(x))),
     getSettings: () => readJSON(settingsPath, {}),
     setSettings: s => { if (s && typeof s === "object") writeJSON(settingsPath, s); },

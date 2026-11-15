@@ -1157,14 +1157,76 @@
         offeredVersion = i.latest;
         showUpdateCard(i);
     }, e => log("update check failed:", e.message));
-    setTimeout(autoCheck, 10000);
-    setInterval(autoCheck, 6 * 60 * 60 * 1000);
+    const custom = () => N.getSettings().custom || {};
+    const autoCheckIfOn = () => { if (custom().autoUpdate !== false) autoCheck(); };
+    setTimeout(autoCheckIfOn, 10000);
+    setInterval(autoCheckIfOn, 6 * 60 * 60 * 1000);
+
+    // ---------------------------------------------------------------- Lumicord settings (settings.json "custom")
+    const DEFAULT_CUSTOM = { accent: "#ec4899", radius: 8, animations: true, customCSS: "", autoUpdate: true };
+    const ACCENTS = ["#ec4899", "#9b7bff", "#5865f2", "#23a55a", "#f0b232", "#f23f43", "#00a8fc"];
+    function applyCustom() {
+        const c = Object.assign({}, DEFAULT_CUSTOM, custom());
+        const accent = /^#[0-9a-f]{6}$/i.test(c.accent) ? c.accent : DEFAULT_CUSTOM.accent;
+        const r = Math.max(0, Math.min(16, Number(c.radius) || 0));
+        addStyle("lumicord-custom", `:root{--lumi-accent:${accent};--lumi-accent-hover:${accent}cc}
+          .lumi-card,.lumi-btn,.lumi-input,.lumi-modal,.lumi-toast{border-radius:${r}px!important}
+          ${c.animations ? "" : ".lumi-page *,.lumi-modal *,.lumi-toast{animation:none!important;transition:none!important}"}`);
+        addStyle("lumicord-usercss", String(c.customCSS || ""));
+    }
+    const setCustom = patch => { const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, patch); N.setSettings(cur); applyCustom(); };
+
+    function settingsPage() {
+        const c = Object.assign({}, DEFAULT_CUSTOM, custom());
+        const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
+        const sw = (on, fn) => { const t = toggle(on, v => { t.classList.toggle("on", v); t.setAttribute("aria-checked", String(v)); fn(v); }); return t; };
+        const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card" }, h("div", { class: "lumi-set-title" }, title), ...rows);
+
+        const color = h("input", { type: "color", class: "lumi-color", value: c.accent, onInput: e => setCustom({ accent: e.target.value }) });
+        const swatches = h("div", { class: "lumi-swatches" }, ACCENTS.map(a => h("button", { class: "lumi-swatch", title: a, style: { background: a }, onClick: () => { color.value = a; setCustom({ accent: a }); } })), color);
+        const radiusVal = h("span", { class: "lumi-sp-val" }, c.radius + "px");
+        const radius = h("input", { type: "range", class: "lumi-sp-slider", min: 0, max: 16, value: c.radius, onInput: e => { radiusVal.textContent = e.target.value + "px"; setCustom({ radius: Number(e.target.value) }); } });
+
+        let cssTimer;
+        const css = h("textarea", { class: "lumi-input lumi-css", spellcheck: false, placeholder: "/* Your CSS, applied live on top of Discord and themes */", value: c.customCSS,
+            onInput: e => { clearTimeout(cssTimer); cssTimer = setTimeout(() => setCustom({ customCSS: e.target.value }), 300); } });
+
+        const net = h("div", null);
+        const drawNet = async () => {
+            net.textContent = "";
+            if (!N.localAccess) return net.append(h("div", { class: "lumi-desc" }, "Restart Discord to manage saved choices."));
+            const list = Object.entries(await N.localAccess.list().catch(() => ({})));
+            if (!list.length) return net.append(h("div", { class: "lumi-desc" }, "No saved choices. Plugins that try to reach your local network will ask first."));
+            list.forEach(([host, ok]) => net.append(row(host, ok ? "Allowed" : "Denied",
+                h("button", { class: "lumi-btn", onClick: () => N.localAccess.forget(host).then(drawNet) }, "Forget"))));
+            net.append(h("button", { class: "lumi-btn", style: { marginTop: "10px" }, onClick: () => N.localAccess.forget("*").then(drawNet) }, "Forget all"));
+        };
+        drawNet();
+
+        return h("div", null,
+            section("Appearance",
+                row("Accent color", "Used for buttons, switches and highlights in Lumicord.", swatches),
+                row("Corner roundness", null, h("div", { class: "lumi-set-slider" }, radius, radiusVal)),
+                row("Animations", "Turn off for a calmer, faster feel.", sw(c.animations, v => setCustom({ animations: v })))),
+            section("Custom CSS", h("div", { class: "lumi-desc" }, "Small tweaks without making a theme. Saved automatically."), css),
+            section("General",
+                row("Lumicord in the settings sidebar", "Show the Lumicord section in Discord's settings list. Takes effect after a restart.",
+                    sw(N.getSettings().nativeSidebar !== false, v => { const cur = N.getSettings(); cur.nativeSidebar = v; N.setSettings(cur); })),
+                row("Check for updates automatically", "Every 6 hours. You can always check on the Updater page.", sw(c.autoUpdate, v => setCustom({ autoUpdate: v }))),
+                row("Addon folders", null, h("div", { class: "lumi-actions" },
+                    h("button", { class: "lumi-btn", onClick: () => N.openFolder("plugin") }, "Plugins folder"),
+                    h("button", { class: "lumi-btn", onClick: () => N.openFolder("theme") }, "Themes folder")))),
+            section("Local network access", h("div", { class: "lumi-desc" }, "Choices you saved with \"Remember my choice\"."), net),
+            h("button", { class: "lumi-btn", onClick: () => BdApi.UI.showConfirmationModal("Reset settings", "Reset appearance, custom CSS and general options to their defaults?", { danger: true, confirmText: "Reset",
+                onConfirm: () => { const cur = N.getSettings(); delete cur.custom; N.setSettings(cur); applyCustom(); toast("Settings reset"); } }) }, "Reset to defaults"));
+    }
 
     const PAGES = {
         plugins: { label: "Plugins", icon: "plugins", render: () => tabbedPage("plugin") },
         themes: { label: "Themes", icon: "themes", render: () => tabbedPage("theme") },
         marketplace: { label: "Marketplace", icon: "market", render: () => marketplace() },
         updater: { label: "Updater", icon: "update", render: updaterPage },
+        settings: { label: "Settings", icon: "gear", render: settingsPage },
     };
     const pageContent = key => h("div", { class: "lumi-page" }, h("h1", { class: "lumi-h1" }, PAGES[key].label), PAGES[key].render());
 
@@ -1623,6 +1685,14 @@
       .lumi-brand{color:var(--header-primary,#f2f3f5)}
       .lumi-nav-item.active{background:var(--background-modifier-selected,#4e50588c)}
     `);
+
+    addStyle("lumicord-settings", `
+      .lumi-set-card{margin-bottom:16px}.lumi-set-title{font-size:16px;font-weight:600;color:var(--header-primary,#fff);margin-bottom:4px}
+      .lumi-swatches{display:flex;gap:6px;align-items:center}.lumi-swatch{width:22px;height:22px;border-radius:50%!important;border:2px solid #fff3;cursor:pointer;padding:0}
+      .lumi-color{width:28px;height:26px;border:0;background:none;padding:0;cursor:pointer}
+      .lumi-set-slider{display:flex;gap:10px;align-items:center;min-width:200px}
+      .lumi-css{width:100%;min-height:160px;font-family:Consolas,monospace;font-size:13px;resize:vertical;box-sizing:border-box}`);
+    applyCustom();
 
     window.Lumicord = { addons, settings, BdApi, Webpack, Patcher, open: openStandalone, setEnabled, loadPlugin, loadTheme };
     log("loaded", addons.plugin.length, "plugins,", addons.theme.length, "themes");

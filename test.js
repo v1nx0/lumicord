@@ -3,6 +3,27 @@ const assert = require("assert");
 const fs = require("fs"), os = require("os"), path = require("path"), vm = require("vm");
 const { findResources, install, uninstall } = require("./install");
 
+// Local-access management lists and forgets remembered choices without granting access.
+{
+    const patcher = fs.readFileSync(path.join(__dirname, "src", "patcher.js"), "utf8");
+    const start = patcher.indexOf("const accessFile = path.join(__dirname, \"..\", \"local-access.json\");");
+    const end = patcher.indexOf("// Discord's page Content-Security-Policy", start);
+    const handlers = {};
+    const writes = [];
+    vm.runInNewContext(`(() => {${patcher.slice(start, end)}; })()`, {
+        __dirname: "root/src", path: { join: (...parts) => parts.join("/") },
+        fs: { readFileSync: () => '{"router":true,"nas":false}', writeFileSync: (_file, value) => writes.push(JSON.parse(value)) },
+        electron: { ipcMain: { handle: (name, fn) => { handlers[name] = fn; } } }, log: () => { }, Map,
+    });
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), { router: true, nas: false });
+    assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_FORGET(null, "router"), true);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), { nas: false });
+    assert.strictEqual(handlers.LUMICORD_LOCAL_ACCESS_FORGET(null, "*"), true);
+    assert.deepStrictEqual(JSON.parse(JSON.stringify(handlers.LUMICORD_LOCAL_ACCESS_LIST())), {});
+    assert.deepStrictEqual(writes, [{ nas: false }, {}]);
+    console.log("local access management test passed");
+}
+
 // Run the renderer's actual Patcher in isolation: out-of-order unpatching must not revive a stopped plugin.
 {
     const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
