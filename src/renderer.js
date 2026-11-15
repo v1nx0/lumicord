@@ -1215,14 +1215,20 @@
         const c = customValues();
         const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
         const sw = (on, fn) => toggle(on, fn);
-        const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card" }, h("div", { class: "lumi-set-title" }, title), ...rows);
+        let nth = 0;
+        const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card", style: { animationDelay: (nth++ * 45) + "ms" } }, h("div", { class: "lumi-set-title" }, title), ...rows);
         const select = (value, options, key) => h("select", { class: "lumi-input", onChange: e => setCustom({ [key]: /^(1|6|24|1000|3000|5000|10000)$/.test(e.target.value) ? Number(e.target.value) : e.target.value }) }, options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value) }, label)));
 
         const color = h("input", { type: "color", class: "lumi-color", value: c.accent, onInput: e => setCustom({ accent: e.target.value }) });
-        const swatches = h("div", { class: "lumi-swatches" }, ACCENTS.map(a => h("button", { class: "lumi-swatch", title: a, style: { background: a }, onClick: () => { color.value = a; setCustom({ accent: a }); } })), color);
+        const pick = a => { color.value = a; [...swatches.children].forEach(b => b.classList && b.classList.toggle("on", b.title === a)); setCustom({ accent: a }); };
+        color.addEventListener("input", () => [...swatches.children].forEach(b => b.classList && b.classList.toggle("on", b.title === color.value)));
+        const swatches = h("div", { class: "lumi-swatches" }, ACCENTS.map(a => h("button", { class: "lumi-swatch" + (a === c.accent ? " on" : ""), title: a, style: { background: a }, onClick: () => pick(a) })), h("label", { class: "lumi-swatch lumi-swatch-custom", title: "Custom color" }, color));
         const radiusVal = h("span", { class: "lumi-sp-val" }, c.radius + "px");
         const radius = h("input", { type: "range", class: "lumi-sp-slider", min: 0, max: 16, value: c.radius, onInput: e => { radiusVal.textContent = e.target.value + "px"; setCustom({ radius: Number(e.target.value) }); } });
-        const scale = h("input", { type: "range", class: "lumi-sp-slider", min: 80, max: 125, value: c.fontScale, onInput: e => setCustom({ fontScale: Number(e.target.value) }) });
+        const scaleVal = h("span", { class: "lumi-sp-val" }, c.fontScale + "%");
+        const scale = h("input", { type: "range", class: "lumi-sp-slider", min: 80, max: 125, value: c.fontScale, onInput: e => { scaleVal.textContent = e.target.value + "%"; setCustom({ fontScale: Number(e.target.value) }); } });
+        const fill = el => { const f = () => el.style.setProperty("--fill", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); el.addEventListener("input", f); f(); return el; };
+        fill(radius); fill(scale);
 
         const css = h("textarea", { class: "lumi-input lumi-css", spellcheck: false, placeholder: "/* Your CSS, applied live on top of Discord and themes */", value: c.customCSS,
             onInput: e => setCustom({ customCSS: e.target.value }) });
@@ -1249,9 +1255,9 @@
         const page = h("div", null,
             section("Appearance",
                 row("Accent color", "Used for buttons, switches and highlights in Lumicord.", swatches),
-                row("Hover color", "Used when hovering Lumicord controls.", h("input", { type: "color", class: "lumi-color", value: c.hover, onInput: e => setCustom({ hover: e.target.value }) })),
+                row("Hover color", "Used when hovering Lumicord controls.", h("label", { class: "lumi-swatch lumi-swatch-custom lumi-swatch-solid", style: { background: c.hover } }, h("input", { type: "color", class: "lumi-color", value: c.hover, onInput: e => { e.target.parentNode.style.background = e.target.value; setCustom({ hover: e.target.value }); } }))),
                 row("Corner roundness", null, h("div", { class: "lumi-set-slider" }, radius, radiusVal)),
-                row("Font size", "Scale Lumicord pages only.", scale),
+                row("Font size", "Scale Lumicord pages only.", h("div", { class: "lumi-set-slider" }, scale, scaleVal)),
                 row("Page width", null, select(c.pageWidth, [["narrow", "Narrow"], ["normal", "Normal"], ["wide", "Wide"]], "pageWidth")),
                 row("Card density", null, select(c.density, [["comfortable", "Comfortable"], ["compact", "Compact"]], "density")),
                 row("Animations", "Turn off for a calmer, faster feel.", sw(c.animations, v => setCustom({ animations: v }))),
@@ -1748,11 +1754,41 @@
     `);
 
     addStyle("lumicord-settings", `
-      .lumi-set-card{margin-bottom:16px}.lumi-set-title{font-size:16px;font-weight:600;color:var(--header-primary,#fff);margin-bottom:4px}
-      .lumi-swatches{display:flex;gap:6px;align-items:center}.lumi-swatch{width:22px;height:22px;border-radius:50%!important;border:2px solid #fff3;cursor:pointer;padding:0}
-      .lumi-color{width:28px;height:26px;border:0;background:none;padding:0;cursor:pointer}
-      .lumi-set-slider{display:flex;gap:10px;align-items:center;min-width:200px}
-      .lumi-css{width:100%;min-height:160px;font-family:Consolas,monospace;font-size:13px;resize:vertical;box-sizing:border-box}`);
+      @keyframes lumi-set-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
+      .lumi-set-card{margin-bottom:16px;padding:18px 20px 6px!important;animation:lumi-set-in .4s cubic-bezier(.2,.8,.2,1) both;
+        border:1px solid var(--border-subtle,#ffffff12)!important;transform:none!important}
+      .lumi-set-card:hover{border-color:color-mix(in srgb,var(--lumi-accent) 35%,transparent)!important;box-shadow:0 6px 22px #0004!important}
+      .lumi-set-title{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
+        color:var(--lumi-accent);margin:0 0 6px;padding-bottom:10px;border-bottom:1px solid var(--border-subtle,#ffffff12)}
+      .lumi-set-title::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--lumi-accent);box-shadow:0 0 10px var(--lumi-accent)}
+      .lumi-set-card .lumi-row{padding:12px 8px;margin:0 -8px;border-radius:8px;transition:background .18s}
+      .lumi-set-card .lumi-row:hover{background:#ffffff08}
+      .lumi-set-card .lumi-row:last-child{border-bottom:0}
+      .lumi-set-card .lumi-desc{margin:3px 0 0;font-size:13px;color:var(--text-muted,#949ba4)}
+      .lumi-swatches{display:flex;gap:8px;align-items:center;flex-shrink:0}
+      .lumi-swatch{position:relative;width:24px;height:24px;border-radius:50%!important;border:0;cursor:pointer;padding:0;
+        box-shadow:inset 0 0 0 1px #0003;transition:transform .2s cubic-bezier(.3,1.6,.5,1),box-shadow .2s}
+      .lumi-swatch:hover{transform:scale(1.18)}
+      .lumi-swatch.on{box-shadow:0 0 0 2px var(--background-secondary,#2b2d31),0 0 0 4px currentColor;color:#fff;transform:scale(1.05)}
+      .lumi-swatch.on::after{content:"";position:absolute;inset:7px;border-radius:50%;background:#fff;animation:lumi-pop .25s both}
+      .lumi-swatch-custom{display:grid;place-items:center;overflow:hidden;background:conic-gradient(#f23f43,#f0b232,#23a55a,#00a8fc,#9b7bff,#ec4899,#f23f43)}
+      .lumi-swatch-solid{width:32px;height:32px}
+      .lumi-color{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
+      .lumi-set-slider{display:flex;gap:12px;align-items:center;width:240px;flex-shrink:0}
+      .lumi-set-slider .lumi-sp-val{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--header-primary,#fff)}
+      .lumi-set-card input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:3px;cursor:pointer;
+        background:linear-gradient(90deg,var(--lumi-accent) var(--fill,50%),#ffffff1f var(--fill,50%))}
+      .lumi-set-card input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;
+        box-shadow:0 0 0 4px color-mix(in srgb,var(--lumi-accent) 30%,transparent),0 2px 6px #0006;transition:transform .15s,box-shadow .2s}
+      .lumi-set-card input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.15);box-shadow:0 0 0 7px color-mix(in srgb,var(--lumi-accent) 25%,transparent),0 2px 6px #0006}
+      .lumi-set-card select.lumi-input{-webkit-appearance:none;appearance:none;min-width:150px;padding-right:34px;cursor:pointer;
+        background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23b5bac1' stroke-width='3' d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
+        background-repeat:no-repeat;background-position:right 12px center;transition:border-color .15s,box-shadow .15s}
+      .lumi-set-card select.lumi-input:hover{border-color:#ffffff30}
+      .lumi-set-card .lumi-input:focus{border-color:var(--lumi-accent)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--lumi-accent) 25%,transparent)!important}
+      .lumi-css{width:100%;min-height:170px;margin:10px 0 14px;font-family:Consolas,"Cascadia Code",monospace;font-size:13px;line-height:1.55;
+        resize:vertical;box-sizing:border-box;tab-size:2;transition:border-color .15s,box-shadow .15s}
+      .lumi-switch.on{box-shadow:0 0 12px color-mix(in srgb,var(--lumi-accent) 45%,transparent)}`);
     applyCustom();
 
     window.Lumicord = { addons, settings, BdApi, Webpack, Patcher, open: openStandalone, setEnabled, loadPlugin, loadTheme };
