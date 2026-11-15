@@ -253,7 +253,7 @@ class Row : AnimControl {
     float bounceAt = -1; bool wasSelected;
     protected override bool Animating { get {
         if (Selected && !wasSelected) bounceAt = Anim.Now; wasSelected = Selected;
-        bool bouncing = bounceAt >= 0 && Anim.Now - bounceAt < .45f;
+        bool bouncing = false;
         float t = Anim.Step(sel, Selected ? 1 : 0); bool ch = t != sel || bouncing; sel = t; if (ch && Browse != null) { Browse.Style = Selected ? BtnStyle.Light : BtnStyle.Outline; Browse.BackColor = BackColorNow; Browse.Invalidate(); } return ch; } }
     Color BackColorNow { get { return Theme.Mix(Theme.Mix(Theme.Surface, Theme.SurfaceHover, Found ? hover : 0), Theme.Alpha(Theme.Accent, 42), sel); } }
     protected override void OnPaint(PaintEventArgs e) {
@@ -267,7 +267,7 @@ class Row : AnimControl {
         var fg = !Found ? Theme.Alpha(Theme.Muted, 150) : Theme.Mix(Theme.Text, Color.White, sel);
         var sub = !Found ? Theme.Alpha(Theme.Muted, 120) : Theme.Mix(Theme.Muted, Theme.Alpha(Color.White, 220), sel);
         // icon tile; it bounces once when the card gets selected
-        float bt = bounceAt < 0 ? 1 : Math.Min(1, (Anim.Now - bounceAt) / .45f), sc = 1 + .18f * (float)Math.Sin(bt * Math.PI) * (1 - bt);
+        float sc = 1; // icons stay still (no bounce)
         var saved = g.Save(); g.TranslateTransform(34, 32); g.ScaleTransform(sc, sc); g.TranslateTransform(-34, -32);
         if (AppIcon != null) {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
@@ -976,12 +976,25 @@ class Wizard : Form {
     }
 
     // The real app icon, read from the installed Discord/PTB/Canary .exe (resources\..\<folder>.exe). null if not installed.
+    // Recolor an icon to the Lumicord pink: saturation decides how much of a pixel turns pink, so the
+    // colored background becomes pink and the white logo stays white.
+    static Bitmap Pinkify(Bitmap b) {
+        for (int y = 0; y < b.Height; y++) for (int x = 0; x < b.Width; x++) {
+            var c = b.GetPixel(x, y); if (c.A == 0) continue;
+            int max = Math.Max(c.R, Math.Max(c.G, c.B)), min = Math.Min(c.R, Math.Min(c.G, c.B));
+            float sat = max == 0 ? 0 : (max - min) / (float)max, v = max / 255f;
+            var w = Color.FromArgb((int)(255 * v), (int)(255 * v), (int)(255 * v));
+            var m = Theme.Mix(w, Theme.Accent, sat);
+            b.SetPixel(x, y, Color.FromArgb(c.A, m.R, m.G, m.B));
+        }
+        return b;
+    }
     static Image AppIconFor(string folder, string resources) {
         try {
             if (resources == null) return null;
             var exe = Path.Combine(Path.GetDirectoryName(resources), folder + ".exe");
             if (!File.Exists(exe)) return null;
-            using (var ic = Icon.ExtractAssociatedIcon(exe)) return ic.ToBitmap();
+            using (var ic = Icon.ExtractAssociatedIcon(exe)) return Pinkify(ic.ToBitmap());
         } catch { return null; }
     }
 
