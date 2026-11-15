@@ -703,7 +703,7 @@ class Wizard : Form {
         body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg, Left = 12 * slideDir };
         viewport.Controls.Add(body);
         slideStart = Anim.Now; welcomeLogo = null;
-        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started  \u2192" : "Next"; next.Enabled = true;
+        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started  \u2192" : "Next"; next.Enabled = true; next.Width = s == 0 ? 140 : 96; next.Left = W - 24 - next.Width;
         for (int i = 0; i < 5; i++) if (i < s && doneAt[i] < 0) doneAt[i] = Anim.Now + (i == s - 1 ? 0 : -1); // only the step just finished pops
         if (s == 0) Welcome(); else if (s == 1) License(); else if (s == 2) Actions(); else if (s == 3) Channels(); else RunInstall();
         StartEntrance();
