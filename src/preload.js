@@ -29,7 +29,7 @@ const safeName = (name, type) => {
 };
 const dataFile = name => path.join(dataDir, String(name).replace(/[^\w.\-]/g, "_") + ".json");
 
-// Plugin fetches may not reach this machine or the local network (router pages, localhost services...).
+// Plugin fetches to this machine or the local network (router pages, localhost services...) need the user's OK.
 const dns = require("dns");
 const net = require("net");
 const privateIp = ip => {
@@ -41,28 +41,33 @@ const privateIp = ip => {
     }
     return ip === "::" || ip === "::1" || /^(fc|fd|fe[89ab]|ff)/.test(ip);
 };
-const publicLookup = (host, o, cb) => dns.lookup(host, o, (err, addr, fam) => {
+const blocked = () => new Error("Lumicord: access to this local address was denied");
+// Local addresses need the user's OK (a native dialog in the main process, remembered per address).
+const localOk = (u, who) => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS", u.host, who).catch(() => false);
+const guardedLookup = (u, who) => (host, o, cb) => dns.lookup(host, o, (err, addr, fam) => {
     if (err) return cb(err);
     const list = Array.isArray(addr) ? addr.map(a => a.address) : [addr];
-    if (list.some(privateIp)) return cb(new Error("Lumicord: requests to local network addresses are blocked"));
-    cb(null, addr, fam);
+    if (!list.some(privateIp)) return cb(null, addr, fam);
+    localOk(u, who).then(ok => ok ? cb(null, addr, fam) : cb(blocked()));
 });
 
 // HTTP(S) request with redirects and a timeout. Resolves for any status; get() below requires 200.
-// opts.publicOnly: refuse local/private addresses, on every redirect too.
+// opts.publicOnly: local/private addresses need the user's OK, on every redirect too (opts.who names the plugin).
 function request(url, opts = {}, redirects = 5) {
+    const u0 = new URL(url);
+    if (opts.publicOnly && (privateIp(u0.hostname) || /^localhost$|\.localhost$/i.test(u0.hostname)) && !opts._localOk)
+        return localOk(u0, opts.who).then(ok => { if (!ok) throw blocked(); return request(url, Object.assign({}, opts, { _localOk: u0.host }), redirects); });
     return new Promise((resolve, reject) => {
         const u = new URL(url);
         const lib = u.protocol === "http:" ? http : u.protocol === "https:" ? https : null;
         if (!lib) return reject(new Error("Only http(s) URLs"));
-        if (opts.publicOnly && (privateIp(u.hostname) || /^localhost$|\.localhost$/i.test(u.hostname))) return reject(new Error("Lumicord: requests to local network addresses are blocked"));
-        const req = lib.request(u, { method: opts.method || "GET", headers: Object.assign({ "User-Agent": "Lumicord" }, opts.headers), lookup: opts.publicOnly ? publicLookup : undefined }, res => {
+        const req = lib.request(u, { method: opts.method || "GET", headers: Object.assign({ "User-Agent": "Lumicord" }, opts.headers), lookup: opts.publicOnly && opts._localOk !== u.host ? guardedLookup(u, opts.who) : undefined }, res => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
                 res.resume();
                 const next = new URL(res.headers.location, url);
                 // like browsers: 303 becomes a plain GET; another host never gets our headers or body
                 const keep = res.statusCode !== 303 && next.host === u.host;
-                return resolve(request(next.href, keep ? opts : { publicOnly: opts.publicOnly, timeout: opts.timeout }, redirects - 1));
+                return resolve(request(next.href, keep ? opts : { publicOnly: opts.publicOnly, timeout: opts.timeout, who: opts.who }, redirects - 1));
             }
             const chunks = []; res.on("data", c => chunks.push(c));
             res.on("end", () => resolve({ status: res.statusCode, statusText: res.statusMessage || "", body: Buffer.concat(chunks), headers: res.headers }));
@@ -204,7 +209,7 @@ if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
         const o = opts && typeof opts === "object" ? opts : {};
         const headers = {};
         if (o.headers && typeof o.headers === "object") for (const k in o.headers) if (typeof o.headers[k] === "string") headers[k] = o.headers[k];
-        const r = await request(String(url), { method: typeof o.method === "string" ? o.method : "GET", headers, body: typeof o.body === "string" ? o.body : null, timeout: o.timeout, publicOnly: true })
+        const r = await request(String(url), { method: typeof o.method === "string" ? o.method : "GET", headers, body: typeof o.body === "string" ? o.body : null, timeout: o.timeout, publicOnly: true, who: typeof o.who === "string" ? o.who : "A plugin" })
             .catch(e => ({ error: e }));
         if (r.error) return { status: 0, statusText: String(r.error.message), headers: {}, body: "" };
         return { status: r.status, statusText: r.statusText, headers: r.headers, body: r.body.toString("utf8") };

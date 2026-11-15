@@ -43,6 +43,35 @@ try {
 try { electron.ipcMain.handle("LUMICORD_RELAUNCH", () => { electron.app.relaunch(); electron.app.exit(0); }); }
 catch (e) { log("relaunch handler failed", e && e.message); }
 
+// A plugin wants to reach this PC or the local network (e.g. a music app's local server). Ask with a native dialog
+// the page cannot fake or click for itself; remember the answer per address in local-access.json (outside the
+// folders plugins can write).
+const accessFile = path.join(__dirname, "..", "local-access.json");
+const readAccess = () => { try { return JSON.parse(fs.readFileSync(accessFile, "utf8")); } catch { return {}; } };
+const asking = new Map(); // one dialog per address, even if a plugin fires many requests
+try {
+    electron.ipcMain.handle("LUMICORD_LOCAL_ACCESS", (e, host, who) => {
+        host = String(host).slice(0, 200).toLowerCase(); who = String(who || "A plugin").slice(0, 80);
+        const known = readAccess()[host];
+        if (known !== undefined) return known === true;
+        if (asking.has(host)) return asking.get(host);
+        const win = electron.BrowserWindow.fromWebContents(e.sender);
+        const p = electron.dialog.showMessageBox(win, {
+            type: "question", buttons: ["Allow", "Deny"], defaultId: 1, cancelId: 1, noLink: true, title: "Lumicord",
+            message: `${who} wants to connect to ${host}`,
+            detail: "This address is on your computer or local network (router, other devices, local apps). Allow only if you trust this plugin and expect it to talk to a local app.",
+            checkboxLabel: "Remember my choice", checkboxChecked: true,
+        }).then(r => {
+            const ok = r.response === 0;
+            if (r.checkboxChecked) { const a = readAccess(); a[host] = ok; fs.writeFileSync(accessFile, JSON.stringify(a, null, 2)); }
+            log("local access", host, who, ok ? "allowed" : "denied");
+            return ok;
+        }).finally(() => asking.delete(host));
+        asking.set(host, p);
+        return p;
+    });
+} catch (e) { log("local access handler failed", e && e.message); }
+
 // Discord's page Content-Security-Policy blocks eval (needed to load rewritten webpack modules) and outside images
 // (marketplace thumbnails). Strip it from Discord's main page only. Electron allows a single onHeadersReceived
 // listener per session, so listeners registered later (Discord's, Vencord's) are chained after ours instead of

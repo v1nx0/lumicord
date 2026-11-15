@@ -7,3 +7,4 @@ settings.json
 *.tmp
 installer/screenshot-*.png
 codex-prompts/
+local-access.json

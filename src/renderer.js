@@ -717,8 +717,16 @@
         statSync: p => { const d = N.fs.isDir(p); return { isDirectory: () => d, isFile: () => !d }; },
     };
     fsShim.promises = { writeFile: async (p, d) => fsShim.writeFileSync(p, d), readFile: async (p, o) => readAny(p, o) };
+    // Which plugin is calling, for the "wants to connect to a local address" dialog. Just a label: the dialog itself
+    // is shown by Discord's main process, so a plugin cannot answer it.
+    const callerName = () => {
+        const m = /lumicord:\/\/\/plugins\/([^\s:)]+)/.exec(new Error().stack || "");
+        if (!m) return "A plugin";
+        const a = addons.plugin.find(x => x.file === decodeURIComponent(m[1]));
+        return a ? a.name : decodeURIComponent(m[1]);
+    };
     const netFetch = async (url, opts) => {
-        const r = await N.fetch(String(url && url.url || url), opts);
+        const r = await N.fetch(String(url && url.url || url), Object.assign({}, opts, { who: callerName() }));
         const headers = {};
         for (const k in r.headers || {}) if (typeof r.headers[k] === "string") headers[k] = r.headers[k];
         return new Response(r.body, { status: r.status || 503, statusText: r.statusText || "", headers });
@@ -726,7 +734,7 @@
     // legacy require("request")(url, cb) used by older plugins
     const requestShim = (opts, cb) => {
         const url = typeof opts === "string" ? opts : opts.url || opts.uri;
-        N.fetch(url).then(r => cb(r.status ? null : new Error(r.statusText), { statusCode: r.status, headers: r.headers }, r.body), e => cb(e));
+        N.fetch(url, { who: callerName() }).then(r => cb(r.status ? null : new Error(r.statusText), { statusCode: r.status, headers: r.headers }, r.body), e => cb(e));
     };
     requestShim.get = requestShim;
     const fakeRequire = mod => {
