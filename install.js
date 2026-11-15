@@ -5,7 +5,7 @@ const fs = require("fs");
 const path = require("path");
 
 function findResources(discordDir) {
-    const apps = fs.readdirSync(discordDir).filter(d => /^app-\d/.test(d))
+    const apps = fs.readdirSync(discordDir).filter(d => /^app-\d/.test(d) && fs.existsSync(path.join(discordDir, d, "resources")))
         .sort((a, b) => a.slice(4).localeCompare(b.slice(4), undefined, { numeric: true }));
     if (!apps.length) throw new Error(`No app-* folder in ${discordDir}`);
     return path.join(discordDir, apps.at(-1), "resources");
@@ -33,7 +33,9 @@ function install(res, patcher, profile) {
 function uninstall(res) {
     // Restore the archive first; remove the loader only once Discord's own app.asar is back.
     const orig = path.join(res, "_app.asar"), asar = path.join(res, "app.asar");
-    if (fs.existsSync(orig)) { if (fs.existsSync(asar)) fs.rmSync(asar); fs.renameSync(orig, asar); }
+    // A Discord update can leave its new app.asar beside the old patched archive. Keep the new archive rather
+    // than rolling Discord back; when only _app.asar exists, rename it atomically before removing the loader.
+    if (fs.existsSync(orig)) { if (fs.existsSync(asar)) fs.rmSync(orig); else fs.renameSync(orig, asar); }
     fs.rmSync(path.join(res, "app"), { recursive: true, force: true });
 }
 

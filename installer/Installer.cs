@@ -605,7 +605,7 @@ class Wizard : Form {
     static string FindResourcesIn(string dir) {
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return null;
         var app = Directory.GetDirectories(dir, "app-*")
-            .Where(d => { Version v; return Version.TryParse(Path.GetFileName(d).Substring(4).Split('-')[0], out v); })
+            .Where(d => { Version v; return Directory.Exists(Path.Combine(d, "resources")) && Version.TryParse(Path.GetFileName(d).Substring(4).Split('-')[0], out v); })
             .OrderBy(d => new Version(Path.GetFileName(d).Substring(4).Split('-')[0])).LastOrDefault();
         return app == null ? null : Path.Combine(app, "resources");
     }
@@ -623,7 +623,9 @@ class Wizard : Form {
         if (action == "uninstall") {
             // Restore Discord's archive FIRST; only then remove the loader. If the restore fails, the loader still
             // points at _app.asar and Discord keeps working.
-            if (File.Exists(orig)) { if (File.Exists(asar)) File.Delete(asar); File.Move(orig, asar); say("Restored app.asar"); }
+            // Discord updates can leave their new app.asar beside the old patched archive. Keep the newer archive
+            // instead of rolling Discord back; otherwise move _app.asar into place before removing the loader.
+            if (File.Exists(orig)) { if (File.Exists(asar)) File.Delete(orig); else File.Move(orig, asar); say("Restored app.asar"); }
             if (Directory.Exists(appDir)) { Directory.Delete(appDir, true); say("Removed loader"); }
         } else {
             ExtractFiles(say);

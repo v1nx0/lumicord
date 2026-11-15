@@ -29,16 +29,40 @@ const safeName = (name, type) => {
 };
 const dataFile = name => path.join(dataDir, String(name).replace(/[^\w.\-]/g, "_") + ".json");
 
+// Plugin fetches may not reach this machine or the local network (router pages, localhost services...).
+const dns = require("dns");
+const net = require("net");
+const privateIp = ip => {
+    ip = String(ip).replace(/^\[|\]$/g, "").toLowerCase();
+    const v4 = ip.startsWith("::ffff:") ? ip.slice(7) : ip;
+    if (net.isIPv4(v4)) {
+        const [a, b] = v4.split(".").map(Number);
+        return a === 0 || a === 10 || a === 127 || a >= 224 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b < 32) || (a === 192 && b === 168) || (a === 100 && b >= 64 && b < 128);
+    }
+    return ip === "::" || ip === "::1" || /^(fc|fd|fe[89ab]|ff)/.test(ip);
+};
+const publicLookup = (host, o, cb) => dns.lookup(host, o, (err, addr, fam) => {
+    if (err) return cb(err);
+    const list = Array.isArray(addr) ? addr.map(a => a.address) : [addr];
+    if (list.some(privateIp)) return cb(new Error("Lumicord: requests to local network addresses are blocked"));
+    cb(null, addr, fam);
+});
+
 // HTTP(S) request with redirects and a timeout. Resolves for any status; get() below requires 200.
+// opts.publicOnly: refuse local/private addresses, on every redirect too.
 function request(url, opts = {}, redirects = 5) {
     return new Promise((resolve, reject) => {
         const u = new URL(url);
         const lib = u.protocol === "http:" ? http : u.protocol === "https:" ? https : null;
         if (!lib) return reject(new Error("Only http(s) URLs"));
-        const req = lib.request(u, { method: opts.method || "GET", headers: Object.assign({ "User-Agent": "Lumicord" }, opts.headers) }, res => {
+        if (opts.publicOnly && (privateIp(u.hostname) || /^localhost$|\.localhost$/i.test(u.hostname))) return reject(new Error("Lumicord: requests to local network addresses are blocked"));
+        const req = lib.request(u, { method: opts.method || "GET", headers: Object.assign({ "User-Agent": "Lumicord" }, opts.headers), lookup: opts.publicOnly ? publicLookup : undefined }, res => {
             if (res.statusCode >= 300 && res.statusCode < 400 && res.headers.location && redirects > 0) {
                 res.resume();
-                return resolve(request(new URL(res.headers.location, url).href, res.statusCode === 303 ? {} : opts, redirects - 1));
+                const next = new URL(res.headers.location, url);
+                // like browsers: 303 becomes a plain GET; another host never gets our headers or body
+                const keep = res.statusCode !== 303 && next.host === u.host;
+                return resolve(request(next.href, keep ? opts : { publicOnly: opts.publicOnly, timeout: opts.timeout }, redirects - 1));
             }
             const chunks = []; res.on("data", c => chunks.push(c));
             res.on("end", () => resolve({ status: res.statusCode, statusText: res.statusMessage || "", body: Buffer.concat(chunks), headers: res.headers }));
@@ -57,6 +81,7 @@ function decodeSvelte(json) {
     if (!node) throw new Error("Store format changed");
     const d = node.data, seen = new Map();
     const h = i => {
+        if (i === -1) return undefined; // SvelteKit's encoded undefined sentinel
         if (typeof i !== "number" || i < 0) return i;
         if (seen.has(i)) return seen.get(i);
         const v = d[i];
@@ -86,6 +111,10 @@ const newer = (a, b) => { // is version a newer than b?
     for (let i = 0; i < 3; i++) { if ((pa[i] || 0) > (pb[i] || 0)) return true; if ((pa[i] || 0) < (pb[i] || 0)) return false; }
     return false;
 };
+// Updates must be signed with Lumicord's private key (kept off GitHub), so a changed release asset is refused.
+const UPDATE_KEY = "-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEALwP4iDIxeZdJr2TlK4POZhjDZEwzjCgECXeAV94ffPI=\n-----END PUBLIC KEY-----\n";
+// keep in sync with release.js
+const signedText = (version, files) => "lumicord-update\n" + version + "\n" + Object.keys(files).sort().map(k => k + " " + files[k].sha256).join("\n");
 const updatableFile = rel => /^(src\/[\w.\-]+\.js|vencord\/[\w.\-]+\.(js|css|txt)|vencord\/LICENSE|version\.json)$/.test(rel);
 
 async function checkUpdate() {
@@ -104,18 +133,24 @@ async function checkUpdate() {
     };
 }
 
-async function applyUpdate() {
+let updating = null; // one update at a time: a second click gets the same in-flight result
+const applyUpdate = () => updating || (updating = applyUpdateNow().finally(() => { updating = null; }));
+async function applyUpdateNow() {
     const info = await checkUpdate();
     if (!info.available) throw new Error("Already up to date");
     if (!/^https:\/\/github\.com\/[\w.\-]+\/[\w.\-]+\/releases\/download\//.test(info.assetUrl)) throw new Error("Unexpected download location");
     const bundle = JSON.parse((await get(info.assetUrl)).body.toString("utf8"));
     if (String(bundle.version) !== info.latest) throw new Error("Update file version does not match the release");
+    let signed = false;
+    try { signed = crypto.verify(null, Buffer.from(signedText(String(bundle.version), bundle.files || {})), UPDATE_KEY, Buffer.from(String(bundle.signature), "base64")); } catch { }
+    if (!signed) throw new Error("Update is not signed by Lumicord, refusing to install it");
     // verify everything before touching any file
     const files = Object.entries(bundle.files || {}).map(([rel, f]) => {
         if (!updatableFile(rel)) throw new Error("Update contains a file it may not change: " + rel);
         const data = Buffer.from(String(f.data), "base64");
         if (crypto.createHash("sha256").update(data).digest("hex") !== f.sha256) throw new Error("Checksum mismatch for " + rel);
-        return { rel, data, dest: path.join(root, ...rel.split("/")) };
+        const dest = path.join(root, ...rel.split("/"));
+        return { rel, data, dest, existed: fs.existsSync(dest) };
     });
     if (!files.some(f => f.rel === "src/renderer.js")) throw new Error("Update is incomplete");
     // back up the current files, then swap each new file in via temp file + rename; restore on any failure
@@ -132,13 +167,22 @@ async function applyUpdate() {
         logLine("updater", "updated", info.current, "->", info.latest, files.length, "files");
         return { from: info.current, to: info.latest };
     } catch (e) {
-        for (const f of done) { const b = path.join(backupDir, ...f.rel.split("/")); try { if (fs.existsSync(b)) fs.copyFileSync(b, f.dest); } catch { } }
+        for (const f of done) { const b = path.join(backupDir, ...f.rel.split("/")); try { if (!f.existed) fs.rmSync(f.dest, { force: true }); else if (fs.existsSync(b)) fs.copyFileSync(b, f.dest); } catch { } }
         logLine("updater", "FAILED, restored previous files:", e && e.stack);
         throw e;
     }
 }
 
-contextBridge.exposeInMainWorld("LumicordNative", {
+// Only Discord's own pages get Lumicord: another site loaded in this window gets nothing.
+const isDiscord = () => /^https:\/\/((ptb|canary)\.)?discord\.com$/.test(location.origin);
+const gate = o => {
+    const out = {};
+    for (const k in o) out[k] = typeof o[k] === "function"
+        ? (...a) => { if (!isDiscord()) throw new Error("Lumicord: not available on " + location.origin); return o[k](...a); }
+        : o[k] && typeof o[k] === "object" ? gate(o[k]) : o[k];
+    return out;
+};
+if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
     version: () => versionInfo().version,
     checkUpdate,
     applyUpdate,
@@ -146,6 +190,9 @@ contextBridge.exposeInMainWorld("LumicordNative", {
     fs: {
         write: (p, text) => { const f = safePath(p); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, String(text)); return path.basename(f); },
         read: p => fs.readFileSync(safePath(p), "utf8"),
+        // binary files (images, caches): bytes in and out, so nothing is mangled by text decoding
+        readBytes: p => new Uint8Array(fs.readFileSync(safePath(p))),
+        writeBytes: (p, bytes) => { const f = safePath(p); fs.mkdirSync(path.dirname(f), { recursive: true }); fs.writeFileSync(f, Buffer.from(bytes)); return path.basename(f); },
         exists: p => { try { return fs.existsSync(safePath(p)); } catch { return false; } },
         list: p => fs.readdirSync(safePath(p)),
         remove: p => fs.unlinkSync(safePath(p)),
@@ -157,7 +204,7 @@ contextBridge.exposeInMainWorld("LumicordNative", {
         const o = opts && typeof opts === "object" ? opts : {};
         const headers = {};
         if (o.headers && typeof o.headers === "object") for (const k in o.headers) if (typeof o.headers[k] === "string") headers[k] = o.headers[k];
-        const r = await request(String(url), { method: typeof o.method === "string" ? o.method : "GET", headers, body: typeof o.body === "string" ? o.body : null, timeout: o.timeout })
+        const r = await request(String(url), { method: typeof o.method === "string" ? o.method : "GET", headers, body: typeof o.body === "string" ? o.body : null, timeout: o.timeout, publicOnly: true })
             .catch(e => ({ error: e }));
         if (r.error) return { status: 0, statusText: String(r.error.message), headers: {}, body: "" };
         return { status: r.status, statusText: r.statusText, headers: r.headers, body: r.body.toString("utf8") };
@@ -198,7 +245,7 @@ contextBridge.exposeInMainWorld("LumicordNative", {
         fs.writeFileSync(path.join(dirs[type], file), body);
         return { file, source: body.toString("utf8") };
     },
-});
+}));
 
 // Keep Discord working: run its own preload too.
 try {
@@ -210,5 +257,5 @@ try {
 // When Vencord is loaded too, its preload is the "original" one and it has already hooked webpack.
 const withVencord = /[\\/]vencord[\\/]/i.test(process.env.LUMICORD_ORIGINAL_PRELOAD || "");
 logLine("preload", "Vencord present:", withVencord);
-webFrame.executeJavaScript((withVencord ? "window.__lumicordWithVencord = true;\n" : "") + fs.readFileSync(path.join(__dirname, "renderer.js"), "utf8"))
+if (isDiscord()) webFrame.executeJavaScript((withVencord ? "window.__lumicordWithVencord = true;\n" : "") + fs.readFileSync(path.join(__dirname, "renderer.js"), "utf8"))
     .then(() => logLine("preload", "renderer injected"), e => logLine("preload", "renderer FAILED:", e && e.stack));

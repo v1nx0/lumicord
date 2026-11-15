@@ -63,7 +63,7 @@ electron.app.on("session-created", session => {
         } catch (e) { log("header listener error", e && e.stack); run(i + 1, details, done); }
     };
     register((details, done) => {
-        if (details.resourceType === "mainFrame" && details.responseHeaders)
+        if (details.resourceType === "mainFrame" && details.responseHeaders && /^https:\/\/((ptb|canary)\.)?discord\.com\//.test(details.url))
             for (const k of Object.keys(details.responseHeaders)) if (/^content-security-policy/i.test(k)) delete details.responseHeaders[k];
         run(0, details, done);
     });

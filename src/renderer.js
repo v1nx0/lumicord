@@ -72,6 +72,7 @@
     // Discord's build does not expose webpack's module cache (__webpack_require__.c), so keep our own:
     // every module factory is wrapped to record its module object once it has run (like Vencord does).
     const moduleCache = {};
+    let hasModules = false;
     let capturedRequire = null;
     const WRAPPED = Symbol("lumicordWrapped");
     const wrapFactory = (factory, id) => {
@@ -79,7 +80,7 @@
         const wrapped = function (module, exports, require) {
             if (!capturedRequire && typeof require === "function") capturedRequire = require;
             try { return factory.call(this, module, exports, require); }
-            finally { moduleCache[id] = module; }
+            finally { hasModules = true; moduleCache[id] = module; }
         };
         wrapped[WRAPPED] = true;
         wrapped.toString = () => Function.prototype.toString.call(factory); // Discord and plugins read factory source
@@ -215,12 +216,22 @@
         else RD.render(el, box);
     };
 
-    const modal = (title, content, buttons) => {
-        // Clicking outside counts as Cancel: plugins rely on their onCancel running (e.g. BDFDB's download prompt).
+    const modal = (title, content, buttons, onClose) => {
+        // Clicking outside or pressing Escape counts as Cancel: plugins rely on their onCancel running (e.g. BDFDB's download prompt).
         const cancelBtn = (buttons || []).find(b => !b.primary && !b.danger);
-        const back = h("div", { class: "lumi-backdrop", onClick: e => { if (e.target === back) { close(); if (cancelBtn && cancelBtn.onClick) cancelBtn.onClick(); } } });
+        const cancel = () => { close(); if (cancelBtn && cancelBtn.onClick) cancelBtn.onClick(); };
+        const back = h("div", { class: "lumi-backdrop", onClick: e => { if (e.target === back) cancel(); } });
         const body = h("div", { class: "lumi-modal-body" });
-        const close = () => { if (body._lumiUnmount) body._lumiUnmount(); back.remove(); };
+        // only the top-most modal reacts to Escape
+        const onKey = e => { if (e.key === "Escape" && [...document.querySelectorAll(".lumi-backdrop")].pop() === back) { e.stopImmediatePropagation(); e.preventDefault(); cancel(); } };
+        document.addEventListener("keydown", onKey, true);
+        let closed = false;
+        const close = () => {
+            if (closed) return; closed = true;
+            document.removeEventListener("keydown", onKey, true);
+            if (body._lumiUnmount) body._lumiUnmount(); back.remove();
+            if (onClose) try { onClose(); } catch (e) { console.error("[Lumicord] modal onClose", e); }
+        };
         const foot = h("div", { class: "lumi-modal-foot" }, (buttons || [{ label: "Okay", primary: true }]).map(b =>
             h("button", { class: "lumi-btn" + (b.primary ? " lumi-primary" : "") + (b.danger ? " lumi-danger" : ""), onClick: () => { close(); if (b.onClick) b.onClick(); } }, b.label)));
         back.append(h("div", { class: "lumi-modal" }, h("h2", null, title), body, foot));
@@ -234,7 +245,7 @@
     const getWreq = () => {
         const V = window.Vencord && window.Vencord.Webpack;
         if (withVencord && V && V.wreq) return { c: V.cache || V.wreq.c || {}, m: V.wreq.m || {}, require: V.wreq };
-        return Object.keys(moduleCache).length ? { c: moduleCache, m: (capturedRequire && capturedRequire.m) || {}, require: capturedRequire } : null;
+        return hasModules ? { c: moduleCache, m: (capturedRequire && capturedRequire.m) || {}, require: capturedRequire } : null;
     };
     const Filters = {
         byKeys: (...keys) => m => m != null && keys.every(k => m[k] !== undefined),
@@ -257,7 +268,7 @@
             if (!e || e === window) continue;
             const cands = [e];
             if (o.defaultExport && e.default) cands.push(e.default);
-            if (o.searchExports && typeof e === "object") for (const k in e) { try { cands.push(e[k]); } catch { } }
+            if (o.searchExports && (typeof e === "object" || typeof e === "function")) for (const k in e) { try { cands.push(e[k]); } catch { } }
             for (const c of cands) {
                 // same arguments as BetterDiscord: (exports, module, id)
                 let hit = false; try { hit = c && filter(c, r.c[id], id); } catch { }
@@ -268,6 +279,7 @@
     };
     // BD lets the last argument be an options object: getByKeys("a", "b", { searchExports: true })
     const splitOpts = args => (args.length && typeof args[args.length - 1] === "object") ? [args.slice(0, -1), args[args.length - 1]] : [args, {}];
+    let react; // found once, then reused
     const Webpack = {
         Filters,
         getModule,
@@ -287,8 +299,8 @@
         React: () => {
             const V = window.Vencord && window.Vencord.Webpack && window.Vencord.Webpack.Common;
             if (V && V.React && typeof V.React.Component === "function" && V.React.Component.prototype && V.React.Component.prototype.setState) return V.React;
-            return getModule(m => typeof m.createElement === "function" && typeof m.useState === "function" && typeof m.version === "string"
-                && typeof m.Component === "function" && m.Component.prototype && typeof m.Component.prototype.setState === "function");
+            return react || (react = getModule(m => typeof m.createElement === "function" && typeof m.useState === "function" && typeof m.version === "string"
+                && typeof m.Component === "function" && m.Component.prototype && typeof m.Component.prototype.setState === "function"));
         },
         ReactDOM: () => {
             if (Webpack._reactDOM) return Webpack._reactDOM;
@@ -302,31 +314,45 @@
     Webpack.getByProps = Webpack.getByKeys;
     // Flux stores by name (BdApi.Webpack.getStore("UserStore")), and a lazy map of them (BdApi.Webpack.Stores.UserStore).
     const isStore = m => m && typeof m.getName === "function" && typeof m.addChangeListener === "function";
-    Webpack.getStore = name => getModule(m => isStore(m) && m.getName() === name, { searchExports: true });
+    const fluxStores = new Map(); // only hits are cached: a store may load later
+    Webpack.getStore = name => {
+        if (fluxStores.has(name)) return fluxStores.get(name);
+        const s = getModule(m => isStore(m) && m.getName() === name, { searchExports: true });
+        if (s) fluxStores.set(name, s);
+        return s;
+    };
     Webpack.Stores = new Proxy({}, { get: (_, name) => typeof name === "string" ? Webpack.getStore(name) : undefined });
     Webpack.getAllByProps = Webpack.getAllByKeys;
 
     // ---------------------------------------------------------------- Patcher
-    // shortcut: unpatching restores the original only if no later patch wrapped it again (LIFO); fine for normal stop() order.
     const patchMap = new Map();
+    const PATCH_NEXT = Symbol("lumicordPatchNext");
+    const REPLACE_PATCH_NEXT = Symbol("lumicordReplacePatchNext");
     const patch = (type, caller, obj, method, cb) => {
-        if (!obj || typeof obj[method] !== "function") return () => { };
+        if (!obj || typeof obj[method] !== "function") return null;
         const orig = obj[method];
+        let next = orig;
         // Strict mode keeps `this` undefined for plain function calls (React function components). In sloppy
         // mode it becomes `window`, and plugins like BDFDB then read `window.props` and crash.
         const wrapped = function () {
             "use strict";
             const args = Array.prototype.slice.call(arguments);
-            if (type === "before") { cb(this, args); return orig.apply(this, args); }
-            if (type === "instead") return cb(this, args, orig.bind(this));
-            const ret = orig.apply(this, args);
+            if (type === "before") { cb(this, args); return next.apply(this, args); }
+            if (type === "instead") return cb(this, args, (...a) => next.apply(this, a));
+            const ret = next.apply(this, args);
             const r = cb(this, args, ret);
             return r === undefined ? ret : r;
         };
         Object.assign(wrapped, orig);
         wrapped.toString = () => orig.toString();
+        wrapped[PATCH_NEXT] = () => next;
+        wrapped[REPLACE_PATCH_NEXT] = fn => { next = fn; };
         try { obj[method] = wrapped; } catch (e) { log("Could not patch", method, e); return () => { }; }
-        const un = () => { if (obj[method] === wrapped) obj[method] = orig; };
+        const un = () => {
+            if (obj[method] === wrapped) return void (obj[method] = next);
+            for (let current = obj[method]; current && current[PATCH_NEXT]; current = current[PATCH_NEXT]())
+                if (current[PATCH_NEXT]() === wrapped) return current[REPLACE_PATCH_NEXT](next);
+        };
         if (!patchMap.has(caller)) patchMap.set(caller, []);
         patchMap.get(caller).push(un);
         return un;
@@ -375,8 +401,14 @@
     function contextMenuApi() {
         const vcApi = () => window.Vencord && window.Vencord.Api && window.Vencord.Api.ContextMenu;
         const menu = () => (window.Vencord && window.Vencord.Webpack && window.Vencord.Webpack.Common && window.Vencord.Webpack.Common.Menu) || {};
-        const wrappers = new Map(); // navId -> Map(callback -> Vencord patch function)
+        const wrappers = new Map(); // navId -> Map(callback -> Set(Vencord patch functions))
         const slug = s => String(s || "item").toLowerCase().replace(/[^\w]+/g, "-");
+        const removePatch = (navId, callback, wrapper) => {
+            const api = vcApi(), m = wrappers.get(navId), set = m && m.get(callback);
+            if (!set) return;
+            for (const w of wrapper ? [wrapper] : [...set]) if (set.delete(w) && api) api.removeContextMenuPatch(navId, w);
+            if (!set.size) { m.delete(callback); if (!m.size) wrappers.delete(navId); }
+        };
 
         const buildItem = props => {
             const R = Webpack.React(), M = menu();
@@ -398,6 +430,13 @@
         const buildMenuChildren = items => (Array.isArray(items) ? items : [items]).map(buildItem).filter(Boolean);
 
         return {
+            get CheckboxItem() { return menu().MenuCheckboxItem; },
+            get ControlItem() { return menu().MenuControlItem; },
+            get Group() { return menu().MenuGroup; },
+            get Item() { return menu().MenuItem; },
+            get Menu() { return menu().Menu; },
+            get RadioItem() { return menu().MenuRadioItem; },
+            get Separator() { return menu().MenuSeparator; },
             patch(navId, callback) {
                 const api = vcApi();
                 if (!api || typeof callback !== "function") { log("ContextMenu.patch needs Vencord's context menu API"); return () => { }; }
@@ -409,22 +448,21 @@
                 };
                 api.addContextMenuPatch(navId, wrapper);
                 if (!wrappers.has(navId)) wrappers.set(navId, new Map());
-                wrappers.get(navId).set(callback, wrapper);
-                return () => this.unpatch(navId, callback);
+                const m = wrappers.get(navId);
+                if (!m.has(callback)) m.set(callback, new Set());
+                m.get(callback).add(wrapper);
+                return () => removePatch(navId, callback, wrapper);
             },
-            unpatch(navId, callback) {
-                const api = vcApi(), m = wrappers.get(navId), w = m && m.get(callback);
-                if (api && w) { api.removeContextMenuPatch(navId, w); m.delete(callback); }
-            },
+            unpatch: (navId, callback) => removePatch(navId, callback),
             buildItem,
             buildMenuChildren,
             buildMenu: items => function LumicordMenu(props) {
                 const R = Webpack.React(), M = menu();
                 return R.createElement(M.Menu, Object.assign({ navId: "lumicord-menu", onClose: () => { } }, props), buildMenuChildren(items));
             },
-            open(event, MenuComponent) {
+            open(event, MenuComponent, config) {
                 const C = window.Vencord && window.Vencord.Webpack.Common.ContextMenuApi;
-                if (C) C.openContextMenu(event, p => Webpack.React().createElement(MenuComponent, p));
+                if (C) return C.openContextMenu(event, p => Webpack.React().createElement(MenuComponent, p), config);
             },
             close() { const C = window.Vencord && window.Vencord.Webpack.Common.ContextMenuApi; if (C) C.closeContextMenu(); },
         };
@@ -495,7 +533,10 @@
         DOM: {
             addStyle, removeStyle,
             createElement: (tag, opts, ...kids) => h(tag, opts && opts.className ? Object.assign({}, opts, { class: opts.className }) : opts, ...kids),
-            parseHTML: html => { const t = document.createElement("template"); t.innerHTML = html; return t.content.childNodes.length === 1 ? t.content.firstChild : t.content; },
+            parseHTML: (html, fragment = false) => {
+                const t = document.createElement("template"); t.innerHTML = html;
+                return fragment ? t.content : t.content.childNodes.length === 1 ? t.content.firstChild : t.content.childNodes;
+            },
             onRemoved: (node, cb) => { const o = new MutationObserver(() => { if (!node.isConnected) { o.disconnect(); cb(); } }); o.observe(document.body, { childList: true, subtree: true }); return () => o.disconnect(); },
         },
         UI: {
@@ -521,7 +562,7 @@
                 return modal(title, content, [
                     { label: o.cancelText || "Cancel", onClick: o.onCancel },
                     { label: o.confirmText || "Okay", primary: !o.danger, danger: !!o.danger, onClick: o.onConfirm },
-                ]);
+                ], o.onClose);
             },
         },
         Utils: {
@@ -640,16 +681,34 @@
     pathShim.resolve = pathShim.normalize = (...p) => pathShim.join(...p);
     const toText = d => typeof d === "string" ? d : (d instanceof ArrayBuffer || ArrayBuffer.isView(d)) ? new TextDecoder().decode(d) : String(d);
     const inFolder = (p, folder) => String(p).toLowerCase().replace(/\//g, "\\").startsWith(folder.toLowerCase() + "\\");
+    // Like Node: no encoding gives bytes (a Buffer-like Uint8Array whose toString() is the text), an encoding gives text.
+    const wantsText = o => typeof o === "string" || !!(o && o.encoding);
+    const readAny = (p, o) => {
+        if (wantsText(o)) return N.fs.read(p);
+        const b = N.fs.readBytes(p);
+        b.toString = function (enc) { return new TextDecoder(enc && enc !== "utf8" && enc !== "utf-8" ? enc : "utf-8").decode(this); };
+        return b;
+    };
     const fsShim = {
         writeFileSync(p, d) {
+            if (d instanceof ArrayBuffer || ArrayBuffer.isView(d)) {
+                const bytes = d instanceof ArrayBuffer ? new Uint8Array(d) : new Uint8Array(d.buffer, d.byteOffset, d.byteLength);
+                const file = N.fs.writeBytes(p, bytes);
+                // addon files are text: still let the app pick up a plugin/theme written as bytes
+                if ((inFolder(p, N.folders.plugin) && file.endsWith(".js")) || (inFolder(p, N.folders.theme) && file.endsWith(".css"))) {
+                    const text = toText(bytes);
+                    setTimeout(() => onAddonFileAdded(file.endsWith(".js") ? "plugin" : "theme", file, text));
+                }
+                return;
+            }
             const text = toText(d);
             const file = N.fs.write(p, text);
             if (inFolder(p, N.folders.plugin) && file.endsWith(".js")) setTimeout(() => onAddonFileAdded("plugin", file, text));
             else if (inFolder(p, N.folders.theme) && file.endsWith(".css")) setTimeout(() => onAddonFileAdded("theme", file, text));
         },
         writeFile(p, d, o, cb) { cb = typeof o === "function" ? o : cb; try { fsShim.writeFileSync(p, d); if (cb) cb(null); } catch (e) { if (cb) cb(e); } },
-        readFileSync: p => N.fs.read(p),
-        readFile(p, o, cb) { cb = typeof o === "function" ? o : cb; try { cb(null, N.fs.read(p)); } catch (e) { cb(e); } },
+        readFileSync: (p, o) => readAny(p, o),
+        readFile(p, o, cb) { const enc = typeof o === "function" ? null : o; cb = typeof o === "function" ? o : cb; let r; try { r = readAny(p, enc); } catch (e) { return cb(e); } cb(null, r); },
         existsSync: p => N.fs.exists(p),
         readdirSync: p => N.fs.list(p),
         unlinkSync: p => N.fs.remove(p),
@@ -657,7 +716,7 @@
         mkdirSync: p => N.fs.mkdir(p),
         statSync: p => { const d = N.fs.isDir(p); return { isDirectory: () => d, isFile: () => !d }; },
     };
-    fsShim.promises = { writeFile: async (p, d) => fsShim.writeFileSync(p, d), readFile: async p => N.fs.read(p) };
+    fsShim.promises = { writeFile: async (p, d) => fsShim.writeFileSync(p, d), readFile: async (p, o) => readAny(p, o) };
     const netFetch = async (url, opts) => {
         const r = await N.fetch(String(url && url.url || url), opts);
         const headers = {};
@@ -757,8 +816,8 @@
                     else if (a.kind === "vencord") i.start && i.start();
                     else i.start && i.start(api);
                 } else {
-                    i.stop && i.stop();
-                    Patcher.unpatchAll(a.name);
+                    try { i.stop && i.stop(); }
+                    finally { Patcher.unpatchAll(a.name); }
                 }
             }
             a.enabled = on;
@@ -768,7 +827,8 @@
             a.enabled = false;
             // a plugin that crashed halfway through start() may already have patched Discord: undo that
             if (on && a.type === "plugin") { Patcher.unpatchAll(a.name); try { a.instance && a.instance.stop && a.instance.stop(); } catch { } }
-            if (on) return; // keep the user's choice saved; a temporary failure must not turn it off for good
+            // keep the user's choice saved; a temporary failure must not turn it off for good
+            if (on) { (a.type === "theme" ? settings.themes : settings.plugins)[a.file] = true; save(); return; }
         }
         (a.type === "theme" ? settings.themes : settings.plugins)[a.file] = a.enabled;
         save();
@@ -776,7 +836,7 @@
     const api = { addCSS: (css, id) => { id = id || "native-" + Math.random().toString(36).slice(2); addStyle(id, css); return () => removeStyle(id); } };
 
     const { plugins, themes } = N.listAddons();
-    themes.forEach(t => { const a = loadTheme(t.file, t.source); if (settings.themes[t.file]) setEnabled(a, true); });
+    themes.sort((x, y) => x.file.localeCompare(y.file, "en")).forEach(t => { const a = loadTheme(t.file, t.source); if (settings.themes[t.file]) setEnabled(a, true); });
     // Like BetterDiscord: evaluate and start plugins one by one in file-name order, once Discord's modules are ready.
     // Libraries ("0BDFDB.plugin.js", "0PluginLibrary...") sort first, so they are running before the plugins that
     // check for them when their file is evaluated.
@@ -785,7 +845,9 @@
         .forEach(p => { const a = loadPlugin(p.file, p.source); if (settings.plugins[p.file] && !a.error) setEnabled(a, true); });
     let tries = 0;
     const waitReady = setInterval(() => {
-        if ((getWreq() && Webpack.React()) || ++tries > 75) {
+        const ready = getWreq() && Webpack.React();
+        if (!ready && ++tries === 150) toast("Lumicord: Discord is slow to load, plugins will start when it is ready", { type: "warning" });
+        if (ready) {
             clearInterval(waitReady); startEnabled(); log("ready", addons);
             // dev only: evaluate an expression from settings.json and log the result (for diagnosing plugins)
             if (settings.dev && settings.devEval) setTimeout(() => {
@@ -950,7 +1012,8 @@
         };
         const load = () => {
             draw();
-            if (!storeCache[type]) N.store(type).then(d => { storeCache[type] = d; }, e => { storeCache[type] = e; }).then(draw);
+            const t = type; // the user may switch tabs before this finishes
+            if (!storeCache[t]) N.store(t).then(d => { storeCache[t] = d; }, e => { storeCache[t] = e; }).then(() => { if (type === t) draw(); });
         };
         const tabBtn = (t, label) => {
             const b = h("button", { class: "lumi-tab" + (t === type ? " active" : ""), onClick: () => { type = t; [...tabs.children].forEach(x => x.classList.toggle("active", x === b)); load(); } }, label);
@@ -978,7 +1041,8 @@
             if (btn && btn.offsetWidth) { ink.style.width = btn.offsetWidth + "px"; ink.style.transform = `translateX(${btn.offsetLeft}px)`; }
         };
         // the page may be laid out after we first measure (settings panel animating in), so measure again on resize
-        if (window.ResizeObserver) new ResizeObserver(placeInk).observe(tabs);
+        if (window.ResizeObserver) { const ro = new ResizeObserver(() => { if (!tabs.isConnected && started) return ro.disconnect(); placeInk(); }); ro.observe(tabs); }
+        let started = false;
         const show = (i, btn) => {
             [...tabs.querySelectorAll("button")].forEach(b => b.classList.toggle("active", b === btn));
             placeInk();
@@ -992,7 +1056,7 @@
             h("span", { class: "lumi-chip" }, h("b", null, String(addons[type].length)), " installed"),
             h("span", { class: "lumi-chip lumi-chip-on" }, h("b", null, String(on)), " enabled"));
         // first paint needs layout to size the ink, so select the first tab on the next frame
-        requestAnimationFrame(() => show(0, tabs.querySelector("button")));
+        requestAnimationFrame(() => { started = true; show(0, tabs.querySelector("button")); });
         return h("div", null, h("div", { class: "lumi-pagebar" }, tabs, stats), body);
     }
 

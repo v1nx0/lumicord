@@ -27,7 +27,12 @@ for (const rel of list) {
 
 const dist = path.join(root, "dist");
 fs.mkdirSync(dist, { recursive: true });
-fs.writeFileSync(path.join(dist, "lumicord-update.json"), JSON.stringify({ version, files }));
+// Sign with the private key that never goes to GitHub (see UPDATE_KEY in src/preload.js; keep signedText in sync).
+const keyPath = process.env.LUMICORD_SIGNING_KEY || path.join(require("os").homedir(), ".lumicord", "update-signing-key.pem");
+if (!fs.existsSync(keyPath)) { console.error("Signing key not found: " + keyPath); process.exit(1); }
+const signedText = "lumicord-update\n" + version + "\n" + Object.keys(files).sort().map(k => k + " " + files[k].sha256).join("\n");
+const signature = crypto.sign(null, Buffer.from(signedText), fs.readFileSync(keyPath)).toString("base64");
+fs.writeFileSync(path.join(dist, "lumicord-update.json"), JSON.stringify({ version, files, signature }));
 execSync(`"${path.join(root, "installer", "build.cmd")}"`, { stdio: "inherit", shell: true });
 fs.copyFileSync(path.join(root, "LumicordInstaller.exe"), path.join(dist, "LumicordInstaller.exe"));
 

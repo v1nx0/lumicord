@@ -1,7 +1,109 @@
 // node test.js — checks the installer on a fake Discord folder.
 const assert = require("assert");
-const fs = require("fs"), os = require("os"), path = require("path");
+const fs = require("fs"), os = require("os"), path = require("path"), vm = require("vm");
 const { findResources, install, uninstall } = require("./install");
+
+// Run the renderer's actual Patcher in isolation: out-of-order unpatching must not revive a stopped plugin.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    const patchMap = new Map();");
+    const end = renderer.indexOf("    // ---------------------------------------------------------------- plugin data", start);
+    const Patcher = vm.runInNewContext(`(() => { const log = () => {};${renderer.slice(start, end)}return Patcher; })()`);
+    const target = { method: n => n };
+    Patcher.after("first", target, "method", (_this, _args, ret) => ret + 1);
+    Patcher.after("second", target, "method", (_this, _args, ret) => ret * 2);
+    assert.strictEqual(target.method(1), 4);
+    Patcher.unpatchAll("first");
+    assert.strictEqual(target.method(1), 2, "stopping an inner patch removes it even while a later patch remains");
+    Patcher.unpatchAll("second");
+    assert.strictEqual(target.method(1), 1);
+    assert.strictEqual(Patcher.before("bad", {}, "missing", () => { }), null);
+    console.log("patcher test passed");
+}
+
+// The same ContextMenu callback can be registered more than once; unpatch must remove every registration.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    function contextMenuApi() {");
+    const end = renderer.indexOf("\n    // ---------------------------------------------------------------- BdApi.UI.buildSettingsPanel", start);
+    const added = [], removed = [];
+    const context = {
+        log: () => { }, Webpack: { React: () => ({ createElement: () => ({}) }) },
+        window: { Vencord: { Api: { ContextMenu: {
+            addContextMenuPatch: (nav, fn) => added.push([nav, fn]),
+            removeContextMenuPatch: (nav, fn) => removed.push([nav, fn]),
+        } }, Webpack: { Common: { Menu: { MenuItem: "item", MenuGroup: "group", MenuSeparator: "separator" } } } } },
+    };
+    const ContextMenu = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return contextMenuApi; })()`, context)();
+    const callback = () => { };
+    ContextMenu.patch("test", callback);
+    ContextMenu.patch("test", callback);
+    ContextMenu.unpatch("test", callback);
+    assert.strictEqual(added.length, 2);
+    assert.deepStrictEqual(removed, added, "unpatch removes all duplicate callback registrations");
+    assert.strictEqual(ContextMenu.Item, "item");
+    assert.strictEqual(ContextMenu.Group, "group");
+    assert.strictEqual(ContextMenu.Separator, "separator");
+    console.log("context menu test passed");
+}
+
+// SvelteKit encodes optional catalog fields as -1; the marketplace decoder must restore undefined, not -1.
+{
+    const preload = fs.readFileSync(path.join(__dirname, "src", "preload.js"), "utf8");
+    const start = preload.indexOf("function decodeSvelte(json) {");
+    const end = preload.indexOf("\n// File access", start);
+    const decodeSvelte = vm.runInNewContext(`(() => {${preload.slice(start, end)}return decodeSvelte; })()`);
+    const addons = decodeSvelte({ nodes: [{ data: [{ addons: 1 }, [2], { name: 3, thumbnailId: -1 }, "Optional field"] }] });
+    assert.strictEqual(addons[0].thumbnailId, undefined);
+    console.log("store decode test passed");
+}
+
+// searchExports must inspect properties attached to a function export, as BetterDiscord does.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    const getModule = (filter, opts) => {");
+    const end = renderer.indexOf("    Webpack.getByProps = Webpack.getByKeys;", start);
+    const exported = Object.assign(() => { }, { target: { found: true } });
+    const getModule = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return getModule; })()`, {
+        getWreq: () => ({ c: { one: { exports: exported } } }), Filters: {}, window: {},
+    });
+    assert.strictEqual(getModule(x => x && x.found, { searchExports: true }), exported.target);
+    console.log("webpack export search test passed");
+}
+
+// A plugin that throws in stop() must still have every Patcher hook removed.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    function setEnabled(a, on) {");
+    const end = renderer.indexOf("    const api = {", start);
+    const calls = [];
+    const setEnabled = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return setEnabled; })()`, {
+        toast: () => { }, console: { error: () => { } }, Patcher: { unpatchAll: name => calls.push(name) },
+        settings: { plugins: {}, themes: {} }, save: () => { }, setThemeStyle: () => { }, api: {},
+    });
+    const addon = { type: "plugin", kind: "bd", name: "ThrowsOnStop", file: "throws.plugin.js", enabled: true, instance: { stop: () => { throw new Error("stop failed"); } } };
+    setEnabled(addon, false);
+    assert.deepStrictEqual(calls, ["ThrowsOnStop"]);
+    assert.strictEqual(addon.enabled, false);
+    console.log("plugin stop cleanup test passed");
+}
+
+// parseHTML follows BetterDiscord's single-node, node-list, and explicit-fragment return shapes.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const match = /parseHTML: \(html, fragment = false\) => \{([\s\S]*?)\n            \},/.exec(renderer);
+    assert.ok(match, "parseHTML implementation found");
+    const parseHTML = vm.runInNewContext(`(html, fragment = false) => {${match[1]}\n}` , {
+        document: { createElement: () => {
+            const content = { childNodes: [], marker: "fragment" };
+            return { content, set innerHTML(html) { content.childNodes = html === "one" ? ["one-node"] : ["first", "second"]; content.firstChild = content.childNodes[0]; } };
+        } },
+    });
+    assert.strictEqual(parseHTML("one"), "one-node");
+    assert.deepStrictEqual(parseHTML("many"), ["first", "second"]);
+    assert.strictEqual(parseHTML("many", true).marker, "fragment");
+    console.log("parse HTML test passed");
+}
 
 const d = fs.mkdtempSync(path.join(os.tmpdir(), "lumi-"));
 for (const v of ["app-1.0.9", "app-1.0.10"]) fs.mkdirSync(path.join(d, v, "resources"), { recursive: true });
@@ -19,6 +121,19 @@ assert.strictEqual(fs.readFileSync(path.join(res, "app.asar"), "utf8"), "stock")
 assert.ok(!fs.existsSync(path.join(res, "app")));
 fs.rmSync(d, { recursive: true });
 console.log("all tests passed");
+
+// Discord updated while Lumicord was installed: uninstall must keep the newer app.asar, not roll it back.
+{
+    const d4 = fs.mkdtempSync(path.join(os.tmpdir(), "lumi-"));
+    const r4 = path.join(d4, "app-1.0.1", "resources"); fs.mkdirSync(r4, { recursive: true });
+    fs.writeFileSync(path.join(r4, "_app.asar"), "old"); fs.writeFileSync(path.join(r4, "app.asar"), "new");
+    fs.mkdirSync(path.join(r4, "app"));
+    uninstall(r4);
+    assert.strictEqual(fs.readFileSync(path.join(r4, "app.asar"), "utf8"), "new", "uninstall keeps Discord's newer archive");
+    assert.ok(!fs.existsSync(path.join(r4, "_app.asar")) && !fs.existsSync(path.join(r4, "app")));
+    fs.rmSync(d4, { recursive: true });
+    console.log("uninstall update test passed");
+}
 
 // Discord replaced app.asar while Lumicord was installed: Repair must use the new archive.
 {
@@ -41,4 +156,19 @@ console.log("all tests passed");
     assert.match(fs.readFileSync(path.join(r3, "app", "index.js"), "utf8"), /LUMICORD_PROFILE = "DiscordPTB"/);
     fs.rmSync(d3, { recursive: true });
     console.log("profile test passed");
+}
+
+// fs shim: no encoding returns bytes (toString gives text), an encoding returns text; binary writes stay bytes.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8").replace(/\r/g, "");
+    const src = /(const wantsText = [\s\S]*?\n    };)\n/.exec(renderer)[1];
+    const N = { fs: { read: () => "héllo", readBytes: () => new Uint8Array(Buffer.from("héllo")) } };
+    const readAny = vm.runInNewContext(`${src}; readAny`, { N, TextDecoder, Uint8Array });
+    assert.strictEqual(readAny("x", "utf8"), "héllo");
+    assert.strictEqual(readAny("x", { encoding: "utf8" }), "héllo");
+    const b = readAny("x");
+    assert.ok(b instanceof Uint8Array && b.length === 6, "bytes without encoding");
+    assert.strictEqual(String(b), "héllo");
+    assert.strictEqual(JSON.parse(readAny.call(null, "x").toString().replace("héllo", '"ok"')), "ok");
+    console.log("fs binary test passed");
 }
