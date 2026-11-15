@@ -501,7 +501,10 @@ class Wizard : Form {
                    "• Client mods are against Discord's Terms of Service. Your account could be limited or banned. Use at your own risk.\r\n\r\n" +
                    "• Plugins run with the same access as Discord itself. Only install plugins you trust.\r\n\r\n" +
                    "• Discord updates remove Lumicord. Run this installer again and choose Repair.\r\n\r\n" +
-                   "• Lumicord includes Vencord (github.com/Vendicated/Vencord), also GPL-3.0.\r\n\r\n" +
+                   "Credits\r\n" +
+                   "• Vencord by Vendicated (github.com/Vendicated): github.com/Vendicated/Vencord, GPL-3.0. Lumicord ships Vencord and its plugins.\r\n" +
+                   "• BetterDiscord by Jiiks (github.com/Jiiks), Zerebos (github.com/zerebos) and contributors: github.com/BetterDiscord/BetterDiscord, Apache-2.0. Lumicord runs BetterDiscord plugins and themes through its own BdApi.\r\n" +
+                   "• Lumicord is not affiliated with Vencord, BetterDiscord or Discord.\r\n\r\n" +
                    "• Lumicord files are stored in " + DataDir + "\r\n\r\n" +
                    "This software is provided as is, without warranty of any kind."
         };

@@ -875,6 +875,7 @@
         gear: '<path fill="currentColor" d="M19.4 13a7.6 7.6 0 0 0 0-2l2.1-1.6-2-3.4-2.5 1a7 7 0 0 0-1.7-1L15 3.3h-4l-.4 2.7a7 7 0 0 0-1.7 1l-2.5-1-2 3.4L6.6 11a7.6 7.6 0 0 0 0 2l-2.1 1.6 2 3.4 2.5-1a7 7 0 0 0 1.7 1l.4 2.7h4l.4-2.7a7 7 0 0 0 1.7-1l2.5 1 2-3.4-2.1-1.6ZM12 15.5a3.5 3.5 0 1 1 0-7 3.5 3.5 0 0 1 0 7Z"/>',
         trash: '<path fill="currentColor" d="M9 3h6l1 2h4v2H4V5h4l1-2Zm-3 6h12l-1 12H7L6 9Z"/>',
         code: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M8 7l-5 5 5 5M16 7l5 5-5 5"/>',
+        info: '<path fill="currentColor" d="M12 2a10 10 0 1 0 0 20 10 10 0 0 0 0-20Zm1 15h-2v-6h2v6Zm0-8h-2V7h2v2Z"/>',
         update: '<path fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round" d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5M4 17v2a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-2"/>',
     };
     const svg = (name, size) => { const s = document.createElementNS("http://www.w3.org/2000/svg", "svg"); s.setAttribute("viewBox", "0 0 24 24"); s.setAttribute("width", size || 20); s.setAttribute("height", size || 20); s.innerHTML = ICONS[name]; return s; };
@@ -1288,6 +1289,27 @@
         return btn;
     }
 
+    function aboutPage() {
+        const link = (text, url) => h("a", { class: "lumi-link", href: url, onClick: e => { e.preventDefault(); window.open(url, "_blank"); } }, text);
+        const credit = (name, by, repo, license, what) => h("div", { class: "lumi-card lumi-set-card" },
+            h("div", { class: "lumi-set-title" }, name),
+            h("div", { class: "lumi-desc" }, what),
+            h("div", { class: "lumi-about-links" }, h("span", null, "By "), ...by.flatMap(([n, u], i) => [i ? ", " : "", link(n, u)]),
+                h("span", { class: "lumi-about-sep" }, "·"), link("GitHub", repo), h("span", { class: "lumi-about-sep" }, "·"), license));
+        return h("div", null,
+            h("div", { class: "lumi-card lumi-set-card" },
+                h("div", { class: "lumi-set-title" }, "Lumicord v" + N.version()),
+                h("div", { class: "lumi-desc" }, "A Discord client mod that runs BetterDiscord plugins and themes, and includes Vencord."),
+                h("div", { class: "lumi-about-links" }, link("GitHub", "https://github.com/v1nx0/lumicord"), h("span", { class: "lumi-about-sep" }, "·"), "GPL-3.0")),
+            h("div", { class: "lumi-about-head" }, "Credits"),
+            credit("Vencord", [["Vendicated", "https://github.com/Vendicated"]], "https://github.com/Vendicated/Vencord", "GPL-3.0",
+                "Lumicord ships Vencord and its plugins."),
+            credit("BetterDiscord", [["Jiiks", "https://github.com/Jiiks"], ["Zerebos", "https://github.com/zerebos"], ["contributors", "https://github.com/BetterDiscord/BetterDiscord/graphs/contributors"]],
+                "https://github.com/BetterDiscord/BetterDiscord", "Apache-2.0",
+                "Lumicord runs BetterDiscord plugins and themes through its own reimplementation of BdApi."),
+            h("div", { class: "lumi-desc lumi-about-note" }, "Lumicord is not affiliated with Vencord, BetterDiscord or Discord. Thank you to everyone who builds these projects."));
+    }
+
     function settingsPage() {
         const c = customValues();
         const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
@@ -1370,6 +1392,7 @@
         marketplace: { label: "Marketplace", icon: "market", render: () => marketplace() },
         updater: { label: "Updater", icon: "update", render: updaterPage },
         settings: { label: "Settings", icon: "gear", render: settingsPage },
+        about: { label: "About", icon: "info", render: aboutPage },
     };
     const visiblePages = () => Object.keys(PAGES).filter(k => k !== "marketplace" || custom().showMarketplace !== false);
     const pageContent = key => h("div", { class: "lumi-page" }, h("h1", { class: "lumi-h1" }, PAGES[key].label), PAGES[key].render());
@@ -1851,6 +1874,11 @@
       .lumi-color{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
       .lumi-set-slider{display:flex;gap:12px;align-items:center;width:240px;flex-shrink:0}
       .lumi-set-slider .lumi-sp-val{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--header-primary,#fff)}
+      .lumi-link{color:var(--lumi-accent);text-decoration:none;font-weight:500;cursor:pointer}.lumi-link:hover{text-decoration:underline}
+      .lumi-about-links{display:flex;flex-wrap:wrap;align-items:center;gap:6px;margin:10px 0 14px;font-size:14px;color:var(--text-muted,#949ba4)}
+      .lumi-about-sep{opacity:.6}
+      .lumi-about-head{font-size:12px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--text-muted,#949ba4);margin:22px 0 10px}
+      .lumi-about-note{margin:6px 2px 0!important;font-size:13px}
       .lumi-tip{position:fixed;z-index:10001;pointer-events:none;padding:6px 10px;border-radius:6px;background:var(--background-floating,#111214);
         color:var(--text-normal,#dbdee1);font-size:13px;font-weight:500;box-shadow:0 6px 18px #0008;border:1px solid var(--border-subtle,#ffffff14);animation:lumi-pop .12s ease-out both}
       .lumi-embedded ::-webkit-scrollbar,.lumi-overlay ::-webkit-scrollbar,.lumi-modal ::-webkit-scrollbar,.lumi-dd-menu::-webkit-scrollbar{width:8px;height:8px}
