@@ -125,7 +125,7 @@ const updatableFile = rel => /^(src\/[\w.\-]+\.js|vencord\/[\w.\-]+\.(js|css|txt
 async function checkUpdate() {
     const { version, repo } = versionInfo();
     if (!/^[\w.\-]+\/[\w.\-]+$/.test(repo)) throw new Error("Bad repo in version.json");
-    const r = await request(`https://api.github.com/repos/${repo}/releases/latest`, { headers: { Accept: "application/vnd.github+json" } });
+    const r = await githubRelease(repo, "latest");
     if (r.status === 404) return { current: version, available: false, note: "No releases published yet" };
     if (r.status !== 200) throw new Error("GitHub said HTTP " + r.status);
     const rel = JSON.parse(r.body.toString("utf8"));
@@ -136,6 +136,21 @@ async function checkUpdate() {
         notes: String(rel.body || "").slice(0, 4000), name: rel.name || ("v" + latest), url: rel.html_url,
         assetUrl: asset && asset.browser_download_url,
     };
+}
+
+async function githubRelease(repo, tag) {
+    return request(`https://api.github.com/repos/${repo}/releases/${tag}`, { headers: { Accept: "application/vnd.github+json" } });
+}
+async function releaseNotes(version) {
+    const { repo } = versionInfo(), tag = "v" + String(version).replace(/^v/, "");
+    if (!/^[\w.\-]+\/[\w.\-]+$/.test(repo)) throw new Error("Bad repo in version.json");
+    const url = `https://github.com/${repo}/releases/tag/${encodeURIComponent(tag)}`;
+    try {
+        const r = await githubRelease(repo, "tags/" + encodeURIComponent(tag));
+        if (r.status !== 200) throw new Error("GitHub said HTTP " + r.status);
+        const rel = JSON.parse(r.body.toString("utf8"));
+        return { notes: String(rel.body || "").slice(0, 4000), url: rel.html_url || url };
+    } catch { return { notes: "", url }; }
 }
 
 let updating = null; // one update at a time: a second click gets the same in-flight result
@@ -190,6 +205,7 @@ const gate = o => {
 if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
     version: () => versionInfo().version,
     checkUpdate,
+    releaseNotes,
     applyUpdate,
     folders: { plugin: dirs.plugin, theme: dirs.theme, data: dataDir },
     fs: {
@@ -238,10 +254,13 @@ if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
     // Marketplace: the public BetterDiscord addon catalog.
     store: async type => {
         const { body } = await get(`https://betterdiscord.app/${type === "theme" ? "themes" : "plugins"}/__data.json`);
+        const timestamp = v => { const t = typeof v === "number" ? v : Date.parse(v); return Number.isFinite(t) ? t : 0; };
         return decodeSvelte(JSON.parse(body.toString("utf8"))).map(a => ({
             id: a.id, name: a.name, description: a.description || "", downloads: a.downloads || 0, likes: a.likes || 0,
             author: (a.author && a.author.login && a.author.login.displayName) || (a.author && a.author.githubName) || "Unknown",
             version: (a.latestRelease && a.latestRelease.version) || "", tags: a.tags || [],
+            created: timestamp(a.releaseDate || a.initialReleaseDate || a.initial_release_date || a.createdAt),
+            updated: timestamp((a.latestRelease && (a.latestRelease.date || a.latestRelease.releaseDate || a.latestRelease.createdAt)) || a.latestReleaseDate || a.latest_release_date || a.updatedAt),
             thumbnail: Number.isInteger(a.thumbnailId) ? "https://betterdiscord.app/image/" + a.thumbnailId : "",
         }));
     },
