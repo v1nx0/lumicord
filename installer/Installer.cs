@@ -18,13 +18,13 @@ static class Theme {
     public const int S4 = 4, S8 = 8, S12 = 12, S16 = 16, S24 = 24;
     public const int Radius = 8, SmallRadius = 6;
     public const float TypeCaption = 9.5f, TypeBody = 10.5f, TypeTitle = 16f;
-    public static readonly Color Bg = Color.FromArgb(19, 11, 17);          // dark, tinted pink
-    public static readonly Color Surface = Color.FromArgb(30, 17, 27);
-    public static readonly Color SurfaceHover = Color.FromArgb(42, 24, 37);
-    public static readonly Color Border = Color.FromArgb(66, 38, 58);
+    public static readonly Color Bg = Color.FromArgb(42, 13, 33);          // dark, tinted pink
+    public static readonly Color Surface = Color.FromArgb(58, 18, 45);
+    public static readonly Color SurfaceHover = Color.FromArgb(74, 24, 58);
+    public static readonly Color Border = Color.FromArgb(108, 42, 86);
     public static readonly Color Accent = Color.FromArgb(236, 72, 153); // pink
     public static readonly Color Text = Color.FromArgb(240, 241, 245);
-    public static readonly Color Muted = Color.FromArgb(150, 128, 142);
+    public static readonly Color Muted = Color.FromArgb(214, 166, 196);
     public static readonly Color Danger = Color.FromArgb(218, 55, 60);
 
     static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
@@ -752,14 +752,9 @@ class Wizard : Form {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.DrawImage(LogoAt(72), 32 + (72 - sz) / 2, y + (72 - sz) / 2, sz, sz);
         }
-        Action<float, float, float, Color> blob = (x, y, r, c) => { using (var b = new SolidBrush(c)) g.FillEllipse(b, x - r, y - r, r * 2, r * 2); };
-        blob(500 + (float)Math.Sin(t * .35) * 22, 120 + (float)Math.Cos(t * .28) * 16, 110, Theme.Alpha(Theme.Accent, 14));
-        blob(430 + (float)Math.Cos(t * .22) * 26, 300 + (float)Math.Sin(t * .31) * 18, 80, Theme.Alpha(Color.FromArgb(168, 85, 247), 14));
-        blob(560 + (float)Math.Sin(t * .27 + 1) * 18, 330 + (float)Math.Cos(t * .2) * 22, 50, Theme.Alpha(Theme.Accent, 18));
     }
     void WelcomeTick() {
                 body.Invalidate(new Rectangle(24, 66, 90, 100)); // logo, every frame (60fps) for smooth motion
-        if (frame % 2 == 0) body.Invalidate(new Rectangle(330, 0, body.Width - 330, body.Height)); // shapes, 30fps
     }
     void Welcome() {
         body.Paint += DrawWelcomeShapes;
