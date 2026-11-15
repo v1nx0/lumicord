@@ -254,13 +254,13 @@ if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
     // Marketplace: the public BetterDiscord addon catalog.
     store: async type => {
         const { body } = await get(`https://betterdiscord.app/${type === "theme" ? "themes" : "plugins"}/__data.json`);
-        const timestamp = v => { const t = typeof v === "number" ? v : Date.parse(v); return Number.isFinite(t) ? t : 0; };
+        const timestamp = v => { if (Array.isArray(v) && v[0] === "Date") v = v[1]; const t = typeof v === "number" ? v : Date.parse(v); return Number.isFinite(t) ? t : 0; };
         return decodeSvelte(JSON.parse(body.toString("utf8"))).map(a => ({
             id: a.id, name: a.name, description: a.description || "", downloads: a.downloads || 0, likes: a.likes || 0,
             author: (a.author && a.author.login && a.author.login.displayName) || (a.author && a.author.githubName) || "Unknown",
             version: (a.latestRelease && a.latestRelease.version) || "", tags: a.tags || [],
-            created: timestamp(a.releaseDate || a.initialReleaseDate || a.initial_release_date || a.createdAt),
-            updated: timestamp((a.latestRelease && (a.latestRelease.date || a.latestRelease.releaseDate || a.latestRelease.createdAt)) || a.latestReleaseDate || a.latest_release_date || a.updatedAt),
+            created: timestamp(a.creationDate),
+            updated: timestamp(a.releaseDate || a.creationDate),
             thumbnail: Number.isInteger(a.thumbnailId) ? "https://betterdiscord.app/image/" + a.thumbnailId : "",
         }));
     },
