@@ -86,6 +86,20 @@ static class Icons {
                     g.DrawLine(pen, x + s * 0.25f, y + s * 0.25f, x + s * 0.75f, y + s * 0.75f);
                     g.DrawLine(pen, x + s * 0.75f, y + s * 0.25f, x + s * 0.25f, y + s * 0.75f);
                     break;
+                case "check":
+                    g.DrawLines(pen, new[] { new PointF(x + s * .18f, cy), new PointF(x + s * .42f, y + s * .73f), new PointF(x + s * .84f, y + s * .26f) });
+                    break;
+                case "shield":
+                    using (var p = new GraphicsPath()) { p.AddLines(new[] { new PointF(cx, y + s*.1f), new PointF(x+s*.8f,y+s*.25f), new PointF(x+s*.72f,y+s*.68f), new PointF(cx,y+s*.9f), new PointF(x+s*.28f,y+s*.68f), new PointF(x+s*.2f,y+s*.25f), new PointF(cx,y+s*.1f) }); g.DrawPath(pen,p); }
+                    break;
+                case "store":
+                    using (var p = Theme.Round(new RectangleF(x+s*.16f,y+s*.35f,s*.68f,s*.48f), s*.07f)) g.DrawPath(pen,p);
+                    g.DrawLine(pen,x+s*.12f,y+s*.35f,x+s*.88f,y+s*.35f); g.DrawLine(pen,x+s*.25f,y+s*.18f,x+s*.36f,y+s*.35f); g.DrawLine(pen,x+s*.75f,y+s*.18f,x+s*.64f,y+s*.35f);
+                    break;
+                case "puzzle":
+                    using (var p = Theme.Round(new RectangleF(x+s*.18f,y+s*.18f,s*.64f,s*.64f), s*.1f)) g.DrawPath(pen,p);
+                    g.DrawLine(pen,cx,y+s*.2f,cx,y+s*.8f); g.DrawLine(pen,x+s*.2f,cy,x+s*.8f,cy);
+                    break;
                 case "minus": g.DrawLine(pen, x + s * 0.25f, cy, x + s * 0.75f, cy); break;
                 case "app": {
                     var w = new RectangleF(x + s * 0.12f, y + s * 0.2f, s * 0.76f, s * 0.6f);
@@ -236,11 +250,14 @@ class Row : AnimControl {
         if (withBrowse) { Browse = new FlatButton("Browse", BtnStyle.Outline) { Size = new Size(90, 34), Location = new Point(612 - 90 - 15, 15) }; Controls.Add(Browse); }
     }
     protected override bool Animating { get { float t = Anim.Step(sel, Selected ? 1 : 0); bool ch = t != sel; sel = t; if (ch && Browse != null) { Browse.Style = Selected ? BtnStyle.Light : BtnStyle.Outline; Browse.BackColor = BackColorNow; Browse.Invalidate(); } return ch; } }
-    Color BackColorNow { get { return Theme.Mix(Theme.Mix(Theme.Surface, Theme.SurfaceHover, Found ? hover : 0), Theme.Accent, sel); } }
+    Color BackColorNow { get { return Theme.Mix(Theme.Mix(Theme.Surface, Theme.SurfaceHover, Found ? hover : 0), Theme.Alpha(Theme.Accent, 42), sel); } }
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.Clear(Parent.BackColor);
         var back = BackColorNow;
-        using (var p = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), 6)) using (var b = new SolidBrush(back)) g.FillPath(b, p);
+        using (var p = Theme.Round(new RectangleF(0, 0, Width - 1, Height - 1), 6)) {
+            using (var b = new SolidBrush(back)) g.FillPath(b, p);
+            using (var pen = new Pen(Selected ? Theme.Accent : Theme.Mix(Theme.Border, Theme.Muted, hover * .35f))) g.DrawPath(pen, p);
+        }
         if (Browse != null && Browse.BackColor != back) { Browse.BackColor = back; Browse.Invalidate(); }
         var fg = !Found ? Theme.Alpha(Theme.Muted, 150) : Theme.Mix(Theme.Text, Color.White, sel);
         var sub = !Found ? Theme.Alpha(Theme.Muted, 120) : Theme.Mix(Theme.Muted, Theme.Alpha(Color.White, 220), sel);
@@ -254,7 +271,7 @@ class Row : AnimControl {
         } else {
             using (var tile = Theme.Round(new RectangleF(16, 14, 36, 36), 8))
             using (var tb = new SolidBrush(sel > 0.5f ? Theme.Alpha(Color.White, 40) : Theme.Bg)) g.FillPath(tb, tile);
-            Icons.Draw(g, Icon, new RectangleF(24, 22, 20, 20), sel > 0.5f ? Color.White : (Found ? Theme.Accent : Theme.Muted));
+            Icons.Draw(g, Icon, new RectangleF(24, 22, 20, 20), Icon == "trash" ? Theme.Danger : (Found ? Theme.Mix(Theme.Muted, Theme.Accent, sel) : Theme.Muted));
         }
         int textW = Width - 70 - (Browse != null ? 120 : 20);
         Theme.Draw(g, Title, Theme.F(11.5f, FontStyle.Bold), new RectangleF(66, 11, textW, 22), fg);
@@ -286,7 +303,7 @@ class Check : AnimControl {
 
 // Flat progress bar; easing stops repainting once it reaches its target.
 class Bar : AnimControl {
-    public float Target; float v; public bool Busy = true; public Color Fill = Theme.Accent;
+    public float Target = 0; float v; public bool Busy = true; public Color Fill = Theme.Accent;
     public Bar() { Cursor = Cursors.Default; Size = new Size(612, 6); }
     protected override bool Animating { get { float n = Anim.Step(v, Target, 0.08f); bool ch = n != v; v = n; return ch; } }
     protected override void OnPaint(PaintEventArgs e) {
@@ -295,6 +312,23 @@ class Bar : AnimControl {
         float w = Math.Max(Height, (Width - 1) * v);
         using (var p = Theme.Round(new RectangleF(0, 0, w, Height - 1), 3)) {
             using (var b = new SolidBrush(Fill)) g.FillPath(b, p);
+        }
+    }
+}
+
+// Quiet, flat progress/status mark used by the final screen.
+class StatusRing : AnimControl {
+    public bool Working = true, Success = true; float spin;
+    public StatusRing() { Size = new Size(82, 82); Cursor = Cursors.Default; }
+    protected override bool Animating { get { if (Working) { spin += .055f; if (spin > 1) spin -= 1; return true; } return false; } }
+    protected override void OnPaint(PaintEventArgs e) {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.Clear(Parent.BackColor);
+        var r = new RectangleF(7, 7, Width - 14, Height - 14); Color c = Success ? Theme.Accent : Theme.Danger;
+        using (var p = new Pen(Theme.Border, 5)) g.DrawEllipse(p, r);
+        using (var p = new Pen(c, 5) { StartCap = LineCap.Round, EndCap = LineCap.Round }) {
+            if (Working) g.DrawArc(p, r, spin * 360, 105);
+            else if (Success) g.DrawLines(p, new[] { new PointF(24, 42), new PointF(35, 53), new PointF(59, 29) });
+            else { g.DrawLine(p, 28, 28, 54, 54); g.DrawLine(p, 54, 28, 28, 54); }
         }
     }
 }
@@ -439,12 +473,13 @@ class Wizard : Form {
     [DllImport("user32.dll")] static extern int SendMessage(IntPtr h, int msg, int w, int l);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
 
-    const int W = 660, H = 450;
+    const int W = 820, H = 520, Side = 220, Header = 44, Foot = 68;
     int step;
     string action, channel;
     readonly Dictionary<string, string> customDirs = new Dictionary<string, string>(); // channel -> folder picked with Browse
-    readonly Canvas titleBar = new Canvas { Location = new Point(0, 0), Size = new Size(W, 40), BackColor = Theme.Bg };
-    readonly Canvas viewport = new Canvas { Location = new Point(0, 40), Size = new Size(W, 336), BackColor = Theme.Bg };
+    readonly Canvas titleBar = new Canvas { Location = new Point(0, 0), Size = new Size(W, Header), BackColor = Theme.Bg };
+    readonly Canvas sidebar = new Canvas { Location = new Point(0, Header), Size = new Size(Side, H - Header), BackColor = Theme.Surface };
+    readonly Canvas viewport = new Canvas { Location = new Point(Side, Header), Size = new Size(W - Side, H - Header - Foot), BackColor = Theme.Bg };
     Canvas body;
     float slideStart = -1; int slideDir = 1;
     float progress; // title-bar progress line (0..1)
@@ -453,6 +488,7 @@ class Wizard : Form {
     bool separateProfile;      // "don't share": this Discord version gets its own plugins/themes/settings
     readonly FlatButton back = new FlatButton("Back", BtnStyle.Outline);
     readonly FlatButton next = new FlatButton("Next");
+    IconButton site, code, heart;
 
     static readonly string[,] Builds = { { "Discord", "Discord" }, { "DiscordPTB", "Discord PTB" }, { "DiscordCanary", "Discord Canary" } };
     static string Local { get { return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); } }
@@ -466,36 +502,37 @@ class Wizard : Form {
         // our own exe (not Application.ExecutablePath, which is the host process when the form is hosted elsewhere)
         try { Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); logo = new Icon(Icon, 32, 32).ToBitmap(); } catch { }
 
-        // Quiet title bar: logo, window controls and a thin wizard progress line.
+        // Restrained chrome; navigation and actions live in the two-column layout below.
         titleBar.Paint += (s, e) => {
             var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
             if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(logo, new Rectangle(14, 10, 20, 20)); }
             else Icons.Draw(g, "sparkle", new RectangleF(16, 11, 18, 18), Theme.Accent);
-            using (var track = new SolidBrush(Theme.Alpha(Color.White, 10))) g.FillRectangle(track, 0, 38, W, 2);
-            using (var line = new SolidBrush(Theme.Accent)) g.FillRectangle(line, 0, 38, W * progress, 2);
+            using (var line = new SolidBrush(Theme.Border)) g.FillRectangle(line, 0, Header - 1, W, 1);
         };
         titleBar.MouseDown += (s, e) => { ReleaseCapture(); SendMessage(Handle, 0xA1, 2, 0); };
-        var min = new IconButton("minus", 40) { Round = false, Location = new Point(W - 80, 0), Size = new Size(40, 40) };
-        var close = new IconButton("x", 40) { Round = false, Location = new Point(W - 40, 0), Size = new Size(40, 40), HoverColor = Theme.Danger };
+        var min = new IconButton("minus", 40) { Round = false, Location = new Point(W - 80, 0), Size = new Size(40, Header) };
+        var close = new IconButton("x", 40) { Round = false, Location = new Point(W - 40, 0), Size = new Size(40, Header), HoverColor = Theme.Danger };
         min.Click += (s, e) => WindowState = FormWindowState.Minimized;
         close.Click += (s, e) => FadeOutAndClose();
         titleBar.Controls.Add(min); titleBar.Controls.Add(close);
 
-        // bottom bar: round link buttons left, Back + primary right
-        var site = new IconButton("folder", 36) { Location = new Point(24, 392) };
-        var code = new IconButton("code", 36) { Location = new Point(68, 392) };
-        var heart = new IconButton("heart", 36) { Location = new Point(112, 392) };
+        sidebar.Paint += DrawSidebar;
+        // Utility destinations are deliberately attached to the rail, not the workflow footer.
+        site = new IconButton("folder", 32) { Location = new Point(20, sidebar.Height - 54) };
+        code = new IconButton("code", 32) { Location = new Point(62, sidebar.Height - 54) };
+        heart = new IconButton("heart", 32) { Location = new Point(104, sidebar.Height - 54) };
         site.Click += (s, e) => { Directory.CreateDirectory(DataDir); Process.Start("explorer.exe", DataDir); };
         code.Click += (s, e) => { var p = Path.Combine(DataDir, "plugins"); Directory.CreateDirectory(p); Process.Start("explorer.exe", p); };
         heart.Click += (s, e) => ToggleCredits();
 
-        back.Location = new Point(W - 24 - 96 - 10 - 96, 392); next.Location = new Point(W - 24 - 96, 392);
+        back.Location = new Point(W - 24 - 96 - 10 - 96, H - 50); next.Location = new Point(W - 24 - 96, H - 50);
         back.Click += (s, e) => Show(step - 1);
-        next.Click += (s, e) => { if (step == 3) FadeOutAndClose(); else Show(step + 1); };
-        Controls.AddRange(new Control[] { titleBar, viewport, site, code, heart, back, next });
-        Controls.Add(new InWindowTip(site, "Open Lumicord folder"));
-        Controls.Add(new InWindowTip(code, "Open plugins folder"));
-        Controls.Add(new InWindowTip(heart, "Credits"));
+        next.Click += (s, e) => { if (step == 4) FadeOutAndClose(); else Show(step + 1); };
+        sidebar.Controls.AddRange(new Control[] { site, code, heart });
+        Controls.AddRange(new Control[] { titleBar, sidebar, viewport, back, next });
+        sidebar.Controls.Add(new InWindowTip(site, "Open Lumicord folder"));
+        sidebar.Controls.Add(new InWindowTip(code, "Open plugins folder"));
+        sidebar.Controls.Add(new InWindowTip(heart, "Credits"));
 
         Anim.Tick += OnAnimationTick;
         Show(0);
@@ -504,8 +541,8 @@ class Wizard : Form {
     void OnAnimationTick() {
             if (IsDisposed) return;
             if (Opacity < 1 && !closing) Opacity = Math.Min(1, Opacity + 0.1);
-            float n = Anim.Step(progress, (step + 1) / 4f, 0.12f);
-            if (n != progress) { progress = n; titleBar.Invalidate(); }
+            float n = Anim.Step(progress, step, 0.16f);
+            if (n != progress) { progress = n; sidebar.Invalidate(); }
             if (body != null && slideStart >= 0) {
                 float t = Math.Min(1, (Anim.Now - slideStart) / 0.25f);
                 body.Left = (int)((1 - Theme.Ease(t)) * 24 * slideDir);
@@ -513,6 +550,27 @@ class Wizard : Form {
             }
     }
     protected override void Dispose(bool disposing) { Anim.Tick -= OnAnimationTick; if (logo != null) logo.Dispose(); base.Dispose(disposing); }
+
+    void DrawSidebar(object sender, PaintEventArgs e) {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
+        using (var edge = new Pen(Theme.Border)) g.DrawLine(edge, Side - 1, 0, Side - 1, sidebar.Height);
+        if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(logo, new Rectangle(20, 18, 30, 30)); }
+        else Icons.Draw(g, "sparkle", new RectangleF(22, 20, 26, 26), Theme.Accent);
+        Theme.Draw(g, "Lumicord", Theme.F(14, FontStyle.Bold), new RectangleF(62, 18, 130, 22), Theme.Text);
+        Theme.Draw(g, "Installer", Theme.F(9), new RectangleF(63, 40, 120, 16), Theme.Muted);
+        string[] names = { "Welcome", "License", "Action", "Discord version", "Install" };
+        string[] ico = { "sparkle", "doc", "windowcheck", "app", "download" };
+        float markerY = 92 + progress * 48;
+        using (var b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, 0, markerY, 3, 30);
+        for (int i = 0; i < names.Length; i++) {
+            float y = 92 + i * 48; bool current = i == step && !installDone, done = i < step || (i == step && installDone);
+            Color c = current ? Theme.Accent : done ? Theme.Accent : Theme.Muted;
+            if (done) { using (var b = new SolidBrush(Theme.Accent)) g.FillEllipse(b, 20, y + 6, 18, 18); Icons.Draw(g, "check", new RectangleF(23, y + 9, 12, 12), Color.White); }
+            else { using (var p = Theme.Round(new RectangleF(20, y + 6, 18, 18), 5)) using (var pen = new Pen(current ? Theme.Accent : Theme.Border)) g.DrawPath(pen, p); Icons.Draw(g, ico[i], new RectangleF(24, y + 10, 10, 10), c); }
+            Theme.Draw(g, names[i], Theme.F(10.5f, current ? FontStyle.Bold : FontStyle.Regular), new RectangleF(50, y + 4, 145, 24), current ? Theme.Text : (done ? Theme.Text : Theme.Muted), StringAlignment.Near, StringAlignment.Center);
+        }
+        using (var p = new Pen(Theme.Border)) g.DrawLine(p, 20, sidebar.Height - 70, Side - 20, sidebar.Height - 70);
+    }
 
     protected override void OnHandleCreated(EventArgs e) {
         base.OnHandleCreated(e);
@@ -540,26 +598,34 @@ class Wizard : Form {
         slideDir = s >= step ? 1 : -1;
         step = s;
         if (body != null) { viewport.Controls.Remove(body); body.Dispose(); }
-        body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg, Left = 24 * slideDir };
+        body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg, Left = 12 * slideDir };
         viewport.Controls.Add(body);
         slideStart = Anim.Now;
-        back.Visible = s > 0 && s < 3; next.Text = "Next"; next.Enabled = true;
-        if (s == 0) License(); else if (s == 1) Actions(); else if (s == 2) Channels(); else RunInstall();
+        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started" : "Next"; next.Enabled = true;
+        if (s == 0) Welcome(); else if (s == 1) License(); else if (s == 2) Actions(); else if (s == 3) Channels(); else RunInstall();
     }
 
     // Title row: accent icon + bold title.
+    bool installDone; // the Install step gets its check once it finished successfully
     Label Heading(string icon, string t) {
-        var ic = new Canvas { Location = new Point(24, 14), Size = new Size(30, 30), BackColor = Theme.Bg };
-        ic.Paint += (o, e) => Icons.Draw(e.Graphics, icon, new RectangleF(1, 1, 28, 28), Theme.Accent);
-        var l = new Label { Text = t, Font = Theme.F(16, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(60, 13), AutoSize = true };
-        body.Controls.Add(ic); body.Controls.Add(l); return l;
+        var l = new Label { Text = t, Font = Theme.F(17, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(32, 22), Size = new Size(520, 34), AutoSize = false, BackColor = Theme.Bg };
+        body.Controls.Add(l); return l;
+    }
+    void Subheading(string text) { body.Controls.Add(new Label { Text = text, Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(33, 58), AutoSize = true }); }
+    void Welcome() {
+        if (logo != null) body.Controls.Add(new PictureBox { Image = logo, Location = new Point(32, 94), Size = new Size(62, 62), SizeMode = PictureBoxSizeMode.Zoom });
+        else { var mark = new Canvas { Location = new Point(32,94), Size = new Size(62,62), BackColor = Theme.Bg }; mark.Paint += (o,e) => Icons.Draw(e.Graphics,"sparkle",new RectangleF(8,8,46,46),Theme.Accent); body.Controls.Add(mark); }
+        var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
+        body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
+        string[] text = { "BetterDiscord plugins & themes", "Built-in Marketplace", "Signed automatic updates" }; string[] icon = { "puzzle", "store", "shield" };
+        for (int i=0;i<3;i++) { int y=254+i*34; var row = new Canvas { Location=new Point(32,y), Size=new Size(360,28), BackColor=Theme.Bg }; int n=i; row.Paint += (o,e) => { Icons.Draw(e.Graphics,icon[n],new RectangleF(2,5,18,18),Theme.Accent); Theme.Draw(e.Graphics,text[n],Theme.F(10.5f),new RectangleF(32,1,310,26),Theme.Text,StringAlignment.Near,StringAlignment.Center); }; body.Controls.Add(row); }
     }
 
     // Credits: an in-window panel over the current step (not a Windows message box), with clickable links.
     Canvas credits;
     void ToggleCredits() {
         if (credits != null) { viewport.Controls.Remove(credits); credits.Dispose(); credits = null; return; }
-        credits = new Canvas { Location = new Point(0, 0), Size = new Size(W, 336), BackColor = Theme.Bg, Visible = true };
+        credits = new Canvas { Location = new Point(0, 0), Size = viewport.Size, BackColor = Theme.Bg, Visible = true };
         credits.Paint += (o, e) => {
             var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
             Theme.Draw(g, "Credits", Theme.F(16, FontStyle.Bold), new RectangleF(24, 13, 220, 30), Theme.Text);
@@ -568,8 +634,8 @@ class Wizard : Form {
             string[] descriptions = { "Lumicord ships Vencord and its plugins.", "Lumicord runs BetterDiscord plugins and themes through its own BdApi." };
             for (int i = 0; i < 2; i++) {
                 float y0 = 80 + i * 108;
-                using (var p = Theme.Round(new RectangleF(24, y0, W - 48, 96), Theme.Radius)) using (var b = new SolidBrush(Theme.Surface)) g.FillPath(b, p);
-                using (var p = Theme.Round(new RectangleF(24.5f, y0 + .5f, W - 49, 95), Theme.Radius)) using (var pen = new Pen(Theme.Border)) g.DrawPath(pen, p);
+                using (var p = Theme.Round(new RectangleF(32, y0, 536, 96), Theme.Radius)) using (var b = new SolidBrush(Theme.Surface)) g.FillPath(b, p);
+                using (var p = Theme.Round(new RectangleF(32.5f, y0 + .5f, 535, 95), Theme.Radius)) using (var pen = new Pen(Theme.Border)) g.DrawPath(pen, p);
                 Theme.Draw(g, names[i], Theme.F(11.5f, FontStyle.Bold), new RectangleF(38, y0 + 10, 260, 20), Theme.Text);
                 Theme.Draw(g, descriptions[i], Theme.F(9), new RectangleF(38, y0 + 36, 540, 18), Theme.Muted);
                 Theme.Draw(g, i == 0 ? "By Vendicated  ·  GitHub  ·  GPL-3.0" : "By Jiiks, Zerebos and contributors  ·  GitHub  ·  Apache-2.0", Theme.F(9.5f), new RectangleF(38, y0 + 64, 520, 18), Theme.Accent);
@@ -577,12 +643,12 @@ class Wizard : Form {
             Theme.Draw(g, "Lumicord is not affiliated with Vencord, BetterDiscord or Discord.", Theme.F(8.5f), new RectangleF(26, 298, 520, 18), Theme.Muted);
         };
         credits.Controls.Add(new Label { Text = "Credits", Font = Theme.F(16, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(24, 13), AutoSize = true });
-        var closeCredits = new FlatButton("Close", BtnStyle.Outline) { Location = new Point(W - 120, 12), Size = new Size(96, 32), BackColor = Theme.Bg };
+        var closeCredits = new FlatButton("Close", BtnStyle.Outline) { Location = new Point(472, 12), Size = new Size(96, 32), BackColor = Theme.Bg };
         closeCredits.Click += (s, e) => ToggleCredits(); credits.Controls.Add(closeCredits);
         credits.Controls.Add(new Label { Text = "Lumicord is built on these open source projects. Thank you!", Font = Theme.F(9.5f), ForeColor = Theme.Muted, Location = new Point(26, 48), AutoSize = true });
         int y = 80;
         Action<string, string[,], string, string, string> card = (name, by, repo, license, what) => {
-            var c = new Canvas { Location = new Point(24, y), Size = new Size(W - 48, 96), BackColor = Theme.Surface };
+            var c = new Canvas { Location = new Point(32, y), Size = new Size(536, 96), BackColor = Theme.Surface };
             c.Paint += (o, e) => { using (var pen = new Pen(Theme.Border)) e.Graphics.DrawRectangle(pen, 0, 0, c.Width - 1, c.Height - 1); };
             c.Controls.Add(new Label { Text = name, Font = Theme.F(11.5f, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(14, 10), AutoSize = true, BackColor = Theme.Surface });
             c.Controls.Add(new Label { Text = what, Font = Theme.F(9), ForeColor = Theme.Muted, Location = new Point(14, 36), AutoSize = true, BackColor = Theme.Surface });
@@ -609,13 +675,13 @@ class Wizard : Form {
     }
 
     void License() {
-        Heading("doc", "License Agreement");
-        var frame = new Canvas { Location = new Point(24, 60), Size = new Size(612, 220), BackColor = Theme.Surface, Padding = new Padding(14) };
+        Heading("doc", "License agreement"); Subheading("Please review the terms before continuing.");
+        var frame = new Canvas { Location = new Point(32, 92), Size = new Size(536, 236), BackColor = Theme.Surface, Padding = new Padding(14) };
         frame.Paint += (o, e) => { using (var p = new Pen(Theme.Border)) e.Graphics.DrawRectangle(p, 0, 0, frame.Width - 1, frame.Height - 1); };
         var box = new ReadOnlyText {
             Multiline = true, ReadOnly = true, TabStop = false, ScrollBars = ScrollBars.None, BorderStyle = BorderStyle.None,
             BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.F(9.5f),
-            Location = new Point(14, 14), Size = new Size(612 - 28 - 14, 220 - 28),
+            Location = new Point(14, 14), Size = new Size(500, 208),
             Text = "Lumicord is a free, open source Discord client mod, licensed under the GNU GPL v3.0.\r\n\r\n" +
                    "• Client mods are against Discord's Terms of Service. Your account could be limited or banned. Use at your own risk.\r\n\r\n" +
                    "• Plugins run with the same access as Discord itself. Only install plugins you trust.\r\n\r\n" +
@@ -628,21 +694,21 @@ class Wizard : Form {
                    "This software is provided as is, without warranty of any kind."
         };
         frame.Controls.Add(box);
-        frame.Controls.Add(new SlimScroll(box) { Location = new Point(612 - 14 - 6, 14), Size = new Size(6, 220 - 28) });
-        var agree = new Check("I accept the license agreement") { Location = new Point(24, 292) };
+        frame.Controls.Add(new SlimScroll(box) { Location = new Point(516, 14), Size = new Size(6, 208) });
+        var agree = new Check("I accept the license agreement") { Location = new Point(32, 342) };
         next.Enabled = false; agree.Changed += (o, e) => next.Enabled = agree.Checked;
         body.Controls.Add(frame); body.Controls.Add(agree);
     }
 
     void Actions() {
-        Heading("windowcheck", "Choose an Action");
+        Heading("windowcheck", "Choose an action"); Subheading("Select what you would like Lumicord to do.");
         var opts = new[] {
             new { id = "install", row = new Row("download", "Install Lumicord", "Add Lumicord to your Discord", false) },
             new { id = "repair", row = new Row("repair", "Repair Lumicord", "Reinstall after a Discord update or if something broke", false) },
             new { id = "uninstall", row = new Row("trash", "Uninstall Lumicord", "Remove Lumicord from Discord. Your plugins and themes are kept", false) },
         };
         for (int i = 0; i < opts.Length; i++) {
-            var o = opts[i]; o.row.Location = new Point(24, 60 + i * 78); o.row.Selected = action == o.id;
+            var o = opts[i]; o.row.Size = new Size(536, 70); o.row.Location = new Point(32, 94 + i * 82); o.row.Selected = action == o.id;
             o.row.Click += (x, e) => { action = o.id; foreach (var c in opts) c.row.Selected = c.id == action; next.Enabled = true; };
             body.Controls.Add(o.row);
         }
@@ -650,12 +716,13 @@ class Wizard : Form {
     }
 
     void Channels() {
-        Heading("windowcheck", "Choose Discord Versions");
+        Heading("windowcheck", "Discord version"); Subheading("Pick the Discord installation to update.");
         var rows = new List<Row>();
         for (int i = 0; i < Builds.GetLength(0); i++) {
             string folder = Builds[i, 0];
             string res = ResourcesFor(folder);
-            var r = new Row("app", Builds[i, 1], res ?? "Not Found", true) { Location = new Point(24, 60 + i * 78), Found = res != null, Tag = folder, AppIcon = AppIconFor(folder, res) };
+            var r = new Row("app", Builds[i, 1] + (res != null ? "  ·  Found" : "  ·  Not found"), res ?? "Choose a folder to browse", true) { Size = new Size(536, 70), Location = new Point(32, 94 + i * 76), Found = res != null, Tag = folder, AppIcon = AppIconFor(folder, res) };
+            r.Browse.Location = new Point(432, 18);
             r.Selected = channel == folder && res != null;
             r.Click += (x, e) => { if (!r.Found) return; channel = (string)r.Tag; foreach (var k in rows) k.Selected = k == r; next.Enabled = true; };
             r.Browse.Click += (x, e) => {
@@ -674,7 +741,7 @@ class Wizard : Form {
 
         }
         if (channel == null) { var first = rows.FirstOrDefault(k => k.Found); if (first != null) { channel = (string)first.Tag; first.Selected = true; } }
-        var separate = new Check("Don't share plugins and themes with other Discord versions") { Location = new Point(24, 298), Size = new Size(460, 26) };
+        var separate = new Check("Don't share plugins and themes with other Discord versions") { Location = new Point(32, 326), Size = new Size(500, 26) };
         separate.Changed += (o, e) => separateProfile = separate.Checked;
         if (separateProfile) separate.Toggle();
         body.Controls.Add(separate);
@@ -683,14 +750,17 @@ class Wizard : Form {
     }
 
     void RunInstall() {
-        var head = Heading("download", action == "uninstall" ? "Uninstalling" : action == "repair" ? "Repairing" : "Installing");
-        var bar = new Bar { Location = new Point(24, 62), Target = 0.15f };
-        var log = new ReadOnlyText { BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(600, 236) };
-        body.Controls.Add(bar); body.Controls.Add(log);
-        body.Controls.Add(new SlimScroll(log) { Location = new Point(24 + 606, 82), Size = new Size(6, 236) });
+        var ring = new StatusRing { Location = new Point(259, 76), Working = true };
+        var head = new Label { Text = action == "uninstall" ? "Uninstalling" : action == "repair" ? "Repairing" : "Installing", Font = Theme.F(18, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(0, 168), Size = new Size(600, 38), TextAlign = ContentAlignment.MiddleCenter };
+        var sub = new Label { Text = "This may take a moment.", Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(0, 212), Size = new Size(600, 22), TextAlign = ContentAlignment.MiddleCenter };
+        var details = new FlatButton("Show details", BtnStyle.Outline) { Location = new Point(235, 260), Size = new Size(130, 32), BackColor = Theme.Bg };
+        var log = new ReadOnlyText { BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 8.5f), Location = new Point(42, 306), Size = new Size(506, 72), Visible = false };
+        var scroll = new SlimScroll(log) { Location = new Point(552, 306), Size = new Size(6, 72), Visible = false };
+        details.Click += (o,e) => { bool open = !log.Visible; log.Visible = scroll.Visible = open; details.Text = open ? "Hide details" : "Show details"; details.Invalidate(); };
+        body.Controls.Add(ring); body.Controls.Add(head); body.Controls.Add(sub); body.Controls.Add(details); body.Controls.Add(log); body.Controls.Add(scroll);
         next.Enabled = false; next.Text = "Close";
         int lines = 0;
-        Action<string> say = m => BeginInvoke((Action)(() => { log.AppendText(m + "\r\n"); lines++; bar.Target = Math.Min(0.92f, 0.15f + lines * 0.08f); }));
+        Action<string> say = m => BeginInvoke((Action)(() => { log.AppendText(m + "\r\n"); lines++; }));
         string a = action, ch = channel, custom; bool sep = separateProfile;
         customDirs.TryGetValue(ch, out custom);
         installing = true;
@@ -700,8 +770,10 @@ class Wizard : Form {
             catch (Exception ex) { ok = false; say(""); say("Failed: " + ex.Message); }
             BeginInvoke((Action)(() => {
                 installing = false;
-                bar.Busy = false; bar.Target = 1; if (!ok) bar.Fill = Theme.Danger;
+                ring.Working = false; ring.Success = ok; ring.Invalidate();
                 head.Text = ok ? (a == "uninstall" ? "Uninstalled" : "Installed") : "Something went wrong";
+                installDone = ok; sidebar.Invalidate();
+                sub.Text = ok ? "Lumicord is ready for Discord." : "Review the details and try again.";
                 next.Enabled = true;
             }));
         });
@@ -711,35 +783,43 @@ class Wizard : Form {
     public void SaveShots(string folder) {
         Directory.CreateDirectory(folder);
         Location = new Point(-2000, -2000); Opacity = 1; Show(); Application.DoEvents();
-        SaveShot(folder, "01-license.png");
-        Show(1); Settle(); SaveShot(folder, "02-action.png");
-        action = "install"; Show(2); Settle(); SaveShot(folder, "03-versions.png");
+        SaveShot(folder, "00-welcome.png");
+        Show(1); Settle(); SaveShot(folder, "01-license.png");
+        foreach (Check c in body.Controls.OfType<Check>()) c.Toggle(); Settle(); SaveShot(folder, "01b-license-checked.png");
+        action = "install"; Show(2); Settle(); SaveShot(folder, "02-action.png");
+        Show(3); Settle(); SaveShot(folder, "03-versions.png");
         ToggleCredits(); Settle(); SaveShot(folder, "04-credits.png"); ToggleCredits();
         ShowNotice("Not a Discord folder", "Choose a Discord folder containing an app-* folder with a resources directory."); Settle(); SaveShot(folder, "05-notice.png");
         foreach (Control c in viewport.Controls.OfType<Notice>().ToArray()) { viewport.Controls.Remove(c); c.Dispose(); }
-        FakeFinal(true); Settle(); SaveShot(folder, "06-success.png");
-        FakeFinal(false); Settle(); SaveShot(folder, "07-failure.png");
+        FakeFinal(true, false); Settle(); SaveShot(folder, "06-installing.png");
+        FakeFinal(true, true); Settle(); SaveShot(folder, "07-success.png");
+        FakeFinal(false, true); Settle(); SaveShot(folder, "08-failure.png");
+        FakeFinal(false, true); foreach (Control c in body.Controls) if (c is ReadOnlyText || c is SlimScroll) c.Visible = true; Settle(); SaveShot(folder, "08b-failure-details-open.png");
     }
     void Settle() { for (int i = 0; i < 24; i++) { Application.DoEvents(); System.Threading.Thread.Sleep(16); } }
     void SaveShot(string folder, string name) {
+        // DrawToBitmap can otherwise retain a stale rail buffer after synthetic final states.
+        sidebar.Invalidate(); titleBar.Invalidate(); Application.DoEvents();
         using (var b = new Bitmap(W, H)) {
             DrawToBitmap(b, new Rectangle(0, 0, W, H));
             Control overlay = credits != null ? (Control)credits : viewport.Controls.OfType<Notice>().FirstOrDefault();
             if (overlay != null) using (var layer = new Bitmap(overlay.Width, overlay.Height)) {
                 overlay.DrawToBitmap(layer, new Rectangle(0, 0, layer.Width, layer.Height));
-                using (var g = Graphics.FromImage(b)) g.DrawImageUnscaled(layer, overlay.Left, overlay.Top + viewport.Top);
+                using (var g = Graphics.FromImage(b)) g.DrawImageUnscaled(layer, overlay.Left + viewport.Left, overlay.Top + viewport.Top);
             }
             b.Save(Path.Combine(folder, name), System.Drawing.Imaging.ImageFormat.Png);
         }
     }
-    void FakeFinal(bool ok) {
-        step = 3;
+    void FakeFinal(bool ok, bool complete) {
+        step = 4; installDone = ok && complete;
         if (body != null) { viewport.Controls.Remove(body); body.Dispose(); }
         body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg }; viewport.Controls.Add(body);
-        Heading(ok ? "windowcheck" : "x", ok ? "Installed" : "Something went wrong");
-        var bar = new Bar { Location = new Point(24, 62), Target = 1, Busy = false, Fill = ok ? Theme.Accent : Theme.Danger };
-        var log = new ReadOnlyText { BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 9), Location = new Point(24, 82), Size = new Size(600, 236), Text = ok ? "Copied Lumicord files\r\nWrote loader\r\n\r\nDone. Open Discord and find Lumicord in User Settings." : "Copied Lumicord files\r\n\r\nFailed: Discord resources could not be updated." };
-        body.Controls.Add(bar); body.Controls.Add(log); body.Controls.Add(new SlimScroll(log) { Location = new Point(630, 82), Size = new Size(6, 236) });
+        var ring = new StatusRing { Location = new Point(259, 76), Working = !complete, Success = ok };
+        var h = new Label { Text = complete ? (ok ? "Installed" : "Something went wrong") : "Installing", Font = Theme.F(18, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(0,168), Size = new Size(600,38), TextAlign = ContentAlignment.MiddleCenter };
+        var sub = new Label { Text = complete ? (ok ? "Lumicord is ready for Discord." : "Review the details and try again.") : "This may take a moment.", Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(0,212), Size = new Size(600,22), TextAlign = ContentAlignment.MiddleCenter };
+        var details = new FlatButton("Show details", BtnStyle.Outline) { Location = new Point(235,260), Size = new Size(130,32), BackColor = Theme.Bg };
+        var log = new ReadOnlyText { BackColor = Theme.Surface, ForeColor = Theme.Muted, Font = new Font("Consolas", 8.5f), Location = new Point(42,306), Size = new Size(506,72), Visible = false, Text = ok ? "Copied Lumicord files\r\nWrote loader\r\n\r\nDone." : "Copied Lumicord files\r\n\r\nFailed: Discord resources could not be updated." };
+        body.Controls.Add(ring); body.Controls.Add(h); body.Controls.Add(sub); body.Controls.Add(details); body.Controls.Add(log); body.Controls.Add(new SlimScroll(log) { Location = new Point(552,306), Size = new Size(6,72), Visible = false });
         back.Visible = false; next.Text = "Close"; next.Enabled = true;
     }
 
