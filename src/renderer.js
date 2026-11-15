@@ -249,38 +249,81 @@
         if (withVencord && V && V.wreq) return { c: V.cache || V.wreq.c || {}, m: V.wreq.m || {}, require: V.wreq };
         return hasModules ? { c: moduleCache, m: (capturedRequire && capturedRequire.m) || {}, require: capturedRequire } : null;
     };
+    // Filters and search follow BetterDiscord's webpack/filter.ts + searching.ts. Key checks use `in`, not
+    // `m[k] !== undefined`: Discord has Proxy modules that return a function for ANY property name.
+    const srcOf = id => { try { const r = getWreq(); return r && r.m && r.m[id] ? r.m[id].toString() : ""; } catch { return ""; } };
     const Filters = {
-        byKeys: (...keys) => m => m != null && keys.every(k => m[k] !== undefined),
-        byStrings: (...strs) => m => typeof m === "function" && strs.every(s => Function.prototype.toString.call(m).includes(s)),
-        byPrototypeKeys: (...keys) => m => m != null && m.prototype != null && keys.every(k => k in m.prototype),
+        byKeys: (...keys) => m => { if (!m || (typeof m !== "object" && typeof m !== "function")) return false; for (const k of keys) if (!(k in m)) return false; return true; },
+        byPrototypeKeys: (...keys) => m => { if (!m || (typeof m !== "object" && typeof m !== "function") || !m.prototype) return false; for (const k of keys) if (!(k in m.prototype)) return false; return true; },
+        byRegex: (re, f = m => m) => m => { const x = f(m); if (!x) return false; let str = ""; try { str = x.toString([]); } catch { str = String(x); } return str.search(re) !== -1; },
+        // bySource matches the MODULE's factory source (not the export), like BD
+        bySource: (...searches) => (e, module, id) => {
+            const src = srcOf(module && module.id != null ? module.id : id); if (!src) return false;
+            return searches.every(q => typeof q === "string" ? src.includes(q) : q.test(src));
+        },
+        byStrings: (...strs) => m => { if (typeof m !== "function") return false; try { const str = String(m); return strs.every(x => str.includes(x)); } catch { return false; } },
         byDisplayName: name => m => m != null && m.displayName === name,
-        bySource: (...strs) => m => typeof m === "function" && strs.every(s => Function.prototype.toString.call(m).includes(s)),
-        combine: (...fs) => m => fs.every(f => f(m)),
-        not: f => m => !f(m),
+        byStoreName: name => m => !!(m && m._dispatchToken && typeof m.getName === "function" && m.getName() === name),
+        // shortcut: checks the names appear in a destructuring pattern somewhere in the function, enough for real plugins
+        byDestructure: (...props) => m => { if (typeof m !== "function") return false; const str = String(m); return props.every(p => new RegExp("[{,]\\s*" + p.replace(/[$]/g, "\\$") + "\\s*[:,}=]").test(str)); },
+        byComponentType: f => m => { let c = m; while (c && typeof c === "object" && c.type) c = c.type; return typeof c === "function" && f(c); },
+        combine: (...fs) => (e, m, id) => fs.every(f => f(e, m, id)),
+        not: f => (e, m, id) => !f(e, m, id),
     };
     Filters.byProps = Filters.byKeys;
     Filters.byPrototypeFields = Filters.byPrototypeKeys;
-
-    const getModule = (filter, opts) => {
-        const o = Object.assign({ first: true, searchExports: false, defaultExport: true }, opts);
-        const r = getWreq(), out = [];
-        if (!r || !r.c) return o.first ? undefined : out;
-        for (const id in r.c) {
-            const e = r.c[id] && r.c[id].exports;
-            if (!e || e === window) continue;
-            const cands = [e];
-            if (o.defaultExport && e.default) cands.push(e.default);
-            if (o.searchExports && (typeof e === "object" || typeof e === "function")) for (const k in e) { try { cands.push(e[k]); } catch { } }
-            for (const c of cands) {
-                // same arguments as BetterDiscord: (exports, module, id)
-                let hit = false; try { hit = c && filter(c, r.c[id], id); } catch { }
-                if (hit) { if (o.first) return c; out.push(c); break; }
-            }
+    const TypedArray = Object.getPrototypeOf(Uint8Array);
+    const shouldSkip = e => {
+        if (!e || (typeof e !== "object" && typeof e !== "function")) return true;
+        try {
+            if (e === window || e === document.documentElement || e === Symbol || e instanceof Window || e instanceof TypedArray) return true;
+            if (e[Symbol.toStringTag] === "DOMTokenList" || e.TypedArray) return true;
+            if ((e.$$loader && e.$$baseObject) || (e.Z && e.Z.$$loader && e.Z.$$baseObject)) return true;
+        } catch { return true; }
+        return false;
+    };
+    // BD never hands token/storage modules to filters
+    const guard = filter => (e, m, id) => {
+        try {
+            const d = e && e.default;
+            if (d && d.remove && d.set && d.clear && d.get && !d.sort) return false;
+            if (e.remove && e.set && e.clear && e.get && !e.sort) return false;
+            if ((d && (d.getToken || d.getEmail || d.showToken)) || e.getToken || e.getEmail || e.showToken) return false;
+            return !!filter(e, m, id);
+        } catch { return false; }
+    };
+    const defaultKey = e => { try { if ("A" in e) return "A"; if ("Ay" in e) return "Ay"; if (e.__esModule && "default" in e) return "default"; } catch { } };
+    // One module -> matched value (or undefined), same rules as BD's getMatched
+    const matchModule = (mod, id, filter, o) => {
+        const e = mod && mod.exports;
+        if (shouldSkip(e)) return;
+        if (filter(e, mod, id)) return o.raw ? mod : o.withKey ? [mod, "exports"] : e;
+        if (!o.searchExports && !o.searchDefault) return;
+        let dk; const keys = [];
+        if (o.searchExports) { try { keys.push(...Object.keys(e)); } catch { } }
+        else if (o.searchDefault && (dk = defaultKey(e))) keys.push(dk);
+        for (const k of keys) {
+            let x; try { x = e[k]; } catch { continue; }
+            if (shouldSkip(x) || !filter(x, mod, id)) continue;
+            if (o.raw) return mod;
+            if (!o.defaultExport && dk === k) return o.withKey ? [mod, "exports"] : e;
+            return o.withKey ? [e, k] : x;
         }
+    };
+    const getModule = (filter, opts) => {
+        const o = Object.assign({ first: true, searchExports: false, searchDefault: true, defaultExport: true, raw: false, withKey: false, fatal: false }, opts);
+        const r = getWreq(), out = [], f = guard(filter);
+        if (r && r.c) for (const id of Object.keys(r.c)) {
+            const hit = matchModule(r.c[id], id, f, o);
+            if (hit === undefined) continue;
+            if (o.first) return hit;
+            out.push(hit);
+        }
+        if (o.fatal && (o.first || !out.length)) throw new Error("Module search failed!");
         return o.first ? undefined : out;
     };
     // BD lets the last argument be an options object: getByKeys("a", "b", { searchExports: true })
-    const splitOpts = args => (args.length && typeof args[args.length - 1] === "object") ? [args.slice(0, -1), args[args.length - 1]] : [args, {}];
+    const splitOpts = args => (args.length && args[args.length - 1] && typeof args[args.length - 1] === "object" && !(args[args.length - 1] instanceof RegExp)) ? [args.slice(0, -1), args[args.length - 1]] : [args, {}];
     let react; // found once, then reused
     const Webpack = {
         Filters,
@@ -290,9 +333,32 @@
         getByPrototypeKeys: (...a) => { const [k, o] = splitOpts(a); return getModule(Filters.byPrototypeKeys(...k), o); },
         getBySource: (...a) => { const [k, o] = splitOpts(a); return getModule(Filters.bySource(...k), o); },
         getAllByKeys: (...a) => { const [k, o] = splitOpts(a); return getModule(Filters.byKeys(...k), Object.assign({}, o, { first: false })); },
-        getBulk: (...queries) => queries.map(q => getModule(q.filter, q)),
-        waitForModule: (filter, opts) => new Promise(res => {
+        getAllByStrings: (...a) => { const [k, o] = splitOpts(a); return getModule(Filters.byStrings(...k), Object.assign({}, o, { first: false })); },
+        getAllBySource: (...a) => { const [k, o] = splitOpts(a); return getModule(Filters.bySource(...k), Object.assign({}, o, { first: false })); },
+        getAllByPrototypeKeys: (...a) => { const [k, o] = splitOpts(a); return getModule(Filters.byPrototypeKeys(...k), Object.assign({}, o, { first: false })); },
+        getByRegex: (re, o) => getModule(Filters.byRegex(re), o),
+        getAllByRegex: (re, o) => getModule(Filters.byRegex(re), Object.assign({}, o, { first: false })),
+        getModules: (filter, o) => getModule(filter, Object.assign({}, o, { first: false })),
+        getWithKey: (filter, o) => getModule(filter, Object.assign({}, o, { withKey: true, first: true })),
+        getById: (id, o) => { const r = getWreq(), m = r && r.c && r.c[id]; if (!m) { if (o && o.fatal) throw new Error("Module search failed!"); return; } return o && o.raw ? m : m.exports; },
+        // getMangled(filter | source string/regex/array | id, { name: exportFilter }) -> { name: export }
+        getMangled: (filter, mangled, o) => {
+            o = Object.assign({}, o, { raw: true });
+            const mod = typeof filter === "number" ? Webpack.getById(filter, { raw: true })
+                : typeof filter === "function" ? getModule(filter, o)
+                : getModule(Filters.bySource(...[].concat(filter)), o);
+            const out = {}; if (!mod || !mod.exports) return out;
+            const e = mod.exports;
+            for (const name in mangled) for (const k in e) { let x; try { x = e[k]; } catch { continue; } try { if (mangled[name](x)) { out[name] = x; break; } } catch { } }
+            return out;
+        },
+        getBulk: (...queries) => queries.map(q => { try { return getModule(q.filter, q); } catch { return undefined; } }),
+        getBulkKeyed: queries => { const out = {}; for (const k in queries) { try { out[k] = getModule(queries[k].filter, queries[k]); } catch { } } return out; },
+        // BD resolves when the module loads; polling is enough here. Honors options.signal like BD.
+        waitForModule: (filter, opts) => new Promise((res, rej) => {
+            const first = getModule(filter, opts); if (first) return res(first);
             const t = setInterval(() => { const m = getModule(filter, opts); if (m) { clearInterval(t); res(m); } }, 200);
+            const sig = opts && opts.signal; if (sig) sig.addEventListener("abort", () => { clearInterval(t); rej(new Error("Aborted")); }, { once: true });
         }),
         get modules() { const r = getWreq(); return r ? r.m : {}; },
         get require() { const r = getWreq(); return r && r.require; },
@@ -319,7 +385,10 @@
     const fluxStores = new Map(); // only hits are cached: a store may load later
     Webpack.getStore = name => {
         if (fluxStores.has(name)) return fluxStores.get(name);
-        const s = getModule(m => isStore(m) && m.getName() === name, { searchExports: true });
+        // BD: ask Flux for all stores (fast, exact); fall back to a module search
+        let s;
+        try { const Flux = getModule(m => m.Store && typeof m.Store.getAll === "function"); if (Flux) s = Flux.Store.getAll().find(x => x && typeof x.getName === "function" && x.getName() === name); } catch { }
+        if (!s) s = getModule(m => isStore(m) && m.getName() === name, { searchExports: true });
         if (s) fluxStores.set(name, s);
         return s;
     };

@@ -144,17 +144,32 @@ const { findResources, install, uninstall } = require("./install");
     console.log("store decode test passed");
 }
 
-// searchExports must inspect properties attached to a function export, as BetterDiscord does.
+// Webpack search follows BetterDiscord: searchExports, `in` key checks (Proxy modules), source search, A/default keys.
 {
     const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
-    const start = renderer.indexOf("    const getModule = (filter, opts) => {");
-    const end = renderer.indexOf("    Webpack.getByProps = Webpack.getByKeys;", start);
+    const start = renderer.indexOf("    const srcOf = id =>");
+    const end = renderer.indexOf("    // BD lets the last argument be an options object", start);
     const exported = Object.assign(() => { }, { target: { found: true } });
-    const getModule = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return getModule; })()`, {
-        getWreq: () => ({ c: { one: { exports: exported } } }), Filters: {}, window: {},
+    // a Discord-style Proxy that answers every property with a function, but has no real keys
+    const proxy = new Proxy({}, { get: (t, k) => k === Symbol.toStringTag ? undefined : (r => r) });
+    class RealStore { }
+    const factories = { src: function () { return "CHAT_INPUT_BUTTON_NOTIFICATION animated.div"; } };
+    const cache = {
+        one: { id: "one", exports: exported },
+        prox: { id: "prox", exports: proxy },
+        flux: { id: "flux", exports: { Store: RealStore } },
+        src: { id: "src", exports: { A: function Button() { } } },
+        def: { id: "def", exports: { A: { deep: 1 } } },
+    };
+    function Win() { }
+    const { getModule, Filters } = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return { getModule, Filters }; })()`, {
+        getWreq: () => ({ c: cache, m: factories }), window: new Win(), Window: Win, document: { documentElement: {} }, Uint8Array,
     });
     assert.strictEqual(getModule(x => x && x.found, { searchExports: true }), exported.target);
-    console.log("webpack export search test passed");
+    assert.strictEqual(getModule(Filters.byKeys("Store")).Store, RealStore, "Proxy module must not match byKeys");
+    assert.strictEqual(getModule(Filters.bySource("CHAT_INPUT_BUTTON_NOTIFICATION", "animated.div")), cache.src.exports, "bySource searches module source");
+    assert.strictEqual(getModule(Filters.byKeys("deep")), cache.def.exports.A, "default export key A is searched");
+    console.log("webpack search test passed");
 }
 
 // A plugin that throws in stop() must still have every Patcher hook removed.
