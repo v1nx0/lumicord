@@ -747,8 +747,9 @@ class Wizard : Form {
     void DrawWelcomeShapes(object sender, PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; float t = Anim.Now;
         if (welcomeLogo) {
-            // scale in on arrival, then float; float position + bicubic filtering = no 1px stepping
-            float k = Theme.Back(Math.Min(1, (t - enterStart) / .5f)), sz = 72 * (.8f + .2f * k), y = 82 + (float)Math.Sin(t * 1.6) * 3;
+            // float position + bicubic filtering = no 1px stepping
+            // rise in with the other elements (same 14px / 280ms ease as the entrance), no scale pop, then float
+            float sz = 72, y = 82 + (1 - Theme.Ease(Math.Min(1, (t - enterStart) / .28f))) * 14 + (float)Math.Sin((t - enterStart) * 1.6) * 3;
             g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality;
             g.DrawImage(LogoAt(72), 32 + (72 - sz) / 2, y + (72 - sz) / 2, sz, sz);
         }
