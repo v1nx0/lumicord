@@ -18,13 +18,13 @@ static class Theme {
     public const int S4 = 4, S8 = 8, S12 = 12, S16 = 16, S24 = 24;
     public const int Radius = 8, SmallRadius = 6;
     public const float TypeCaption = 9.5f, TypeBody = 10.5f, TypeTitle = 16f;
-    public static readonly Color Bg = Color.FromArgb(13, 14, 18);
-    public static readonly Color Surface = Color.FromArgb(22, 23, 28);
-    public static readonly Color SurfaceHover = Color.FromArgb(30, 32, 38);
-    public static readonly Color Border = Color.FromArgb(44, 46, 54);
+    public static readonly Color Bg = Color.FromArgb(19, 11, 17);          // dark, tinted pink
+    public static readonly Color Surface = Color.FromArgb(30, 17, 27);
+    public static readonly Color SurfaceHover = Color.FromArgb(42, 24, 37);
+    public static readonly Color Border = Color.FromArgb(66, 38, 58);
     public static readonly Color Accent = Color.FromArgb(236, 72, 153); // pink
     public static readonly Color Text = Color.FromArgb(240, 241, 245);
-    public static readonly Color Muted = Color.FromArgb(128, 132, 144);
+    public static readonly Color Muted = Color.FromArgb(150, 128, 142);
     public static readonly Color Danger = Color.FromArgb(218, 55, 60);
 
     static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
@@ -613,7 +613,7 @@ class Wizard : Form {
             if (alive && ++frame % 2 == 0) side = true; // breathing badge, 30fps
             if (side) sidebar.Invalidate(new Rectangle(0, RailTop - 12, Side, RailRow * 5 + 24));
             AnimateEntrance();
-            if (alive && step == 0 && body != null && frame % 2 == 0) WelcomeTick();
+            if (alive && step == 0 && body != null) WelcomeTick();
             if (body != null && slideStart >= 0) {
                 float t = Math.Min(1, (Anim.Now - slideStart) / 0.25f);
                 body.Left = (int)((1 - Theme.Ease(t)) * 24 * slideDir);
@@ -702,7 +702,7 @@ class Wizard : Form {
         if (body != null) { viewport.Controls.Remove(body); body.Dispose(); }
         body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg, Left = 12 * slideDir };
         viewport.Controls.Add(body);
-        slideStart = Anim.Now; welcomeLogo = null;
+        slideStart = Anim.Now; welcomeLogo = false;
         back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started  \u2192" : "Next"; next.Enabled = true; next.Width = s == 0 ? 140 : 96; next.Left = W - 24 - next.Width;
         for (int i = 0; i < 5; i++) if (i < s && doneAt[i] < 0) doneAt[i] = Anim.Now + (i == s - 1 ? 0 : -1); // only the step just finished pops
         if (s == 0) Welcome(); else if (s == 1) License(); else if (s == 2) Actions(); else if (s == 3) Channels(); else RunInstall();
@@ -742,23 +742,28 @@ class Wizard : Form {
         body.Controls.Add(l); return l;
     }
     void Subheading(string text) { body.Controls.Add(new Label { Text = text, Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(33, 58), AutoSize = true }); }
-    PictureBox welcomeLogo;
+    bool welcomeLogo;
     // Soft flat shapes drifting slowly on the right of the welcome screen (no glow, very low alpha).
     void DrawWelcomeShapes(object sender, PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; float t = Anim.Now;
+        if (welcomeLogo) {
+            // scale in on arrival, then float; float position + bicubic filtering = no 1px stepping
+            float k = Theme.Back(Math.Min(1, (t - enterStart) / .5f)), sz = 72 * (.8f + .2f * k), y = 82 + (float)Math.Sin(t * 1.6) * 3;
+            g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality;
+            g.DrawImage(LogoAt(72), 32 + (72 - sz) / 2, y + (72 - sz) / 2, sz, sz);
+        }
         Action<float, float, float, Color> blob = (x, y, r, c) => { using (var b = new SolidBrush(c)) g.FillEllipse(b, x - r, y - r, r * 2, r * 2); };
         blob(500 + (float)Math.Sin(t * .35) * 22, 120 + (float)Math.Cos(t * .28) * 16, 110, Theme.Alpha(Theme.Accent, 14));
         blob(430 + (float)Math.Cos(t * .22) * 26, 300 + (float)Math.Sin(t * .31) * 18, 80, Theme.Alpha(Color.FromArgb(168, 85, 247), 14));
         blob(560 + (float)Math.Sin(t * .27 + 1) * 18, 330 + (float)Math.Cos(t * .2) * 22, 50, Theme.Alpha(Theme.Accent, 18));
     }
     void WelcomeTick() {
-        if (entering.Count > 0) return; // let the entrance finish first
-        if (welcomeLogo != null && !welcomeLogo.IsDisposed) welcomeLogo.Top = 82 + (int)Math.Round(Math.Sin(Anim.Now * 1.6) * 3);
-        body.Invalidate(new Rectangle(330, 0, body.Width - 330, body.Height)); // only the shapes' area
+                body.Invalidate(new Rectangle(24, 66, 90, 100)); // logo, every frame (60fps) for smooth motion
+        if (frame % 2 == 0) body.Invalidate(new Rectangle(330, 0, body.Width - 330, body.Height)); // shapes, 30fps
     }
     void Welcome() {
         body.Paint += DrawWelcomeShapes;
-        if (logo != null) body.Controls.Add(welcomeLogo = new PictureBox { Image = LogoAt(72), Location = new Point(32, 82), Size = new Size(72, 72), SizeMode = PictureBoxSizeMode.Normal });
+        if (logo != null) welcomeLogo = true;
         else { var mark = new Canvas { Location = new Point(32,94), Size = new Size(62,62), BackColor = Theme.Bg }; mark.Paint += (o,e) => Icons.Draw(e.Graphics,"sparkle",new RectangleF(8,8,46,46),Theme.Accent); body.Controls.Add(mark); }
         var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
         body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
@@ -994,7 +999,7 @@ class Wizard : Form {
             if (resources == null) return null;
             var exe = Path.Combine(Path.GetDirectoryName(resources), folder + ".exe");
             if (!File.Exists(exe)) return null;
-            using (var ic = Icon.ExtractAssociatedIcon(exe)) return Pinkify(ic.ToBitmap());
+            using (var ic = Icon.ExtractAssociatedIcon(exe)) return ic.ToBitmap();
         } catch { return null; }
     }
 
