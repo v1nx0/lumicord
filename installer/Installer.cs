@@ -18,14 +18,14 @@ static class Theme {
     public const int S4 = 4, S8 = 8, S12 = 12, S16 = 16, S24 = 24;
     public const int Radius = 8, SmallRadius = 6;
     public const float TypeCaption = 9.5f, TypeBody = 10.5f, TypeTitle = 16f;
-    public static readonly Color Bg = Color.FromArgb(219, 39, 119); // bright pink theme (#DB2777), deep rose accent (#831843) for contrast
-    public static readonly Color Surface = Color.FromArgb(230, 60, 140);
-    public static readonly Color SurfaceHover = Color.FromArgb(240, 90, 160);
-    public static readonly Color Border = Color.FromArgb(249, 150, 200);
-    public static readonly Color Accent = Color.FromArgb(131, 24, 67);
-    public static readonly Color Text = Color.FromArgb(255, 255, 255);
-    public static readonly Color Muted = Color.FromArgb(253, 222, 238);
-    public static readonly Color Danger = Color.FromArgb(127, 29, 29);
+    public static readonly Color Bg = Color.FromArgb(17, 18, 20); // crisp neutral dark, one pink accent
+    public static readonly Color Surface = Color.FromArgb(30, 31, 34);
+    public static readonly Color SurfaceHover = Color.FromArgb(40, 42, 46);
+    public static readonly Color Border = Color.FromArgb(52, 54, 60);
+    public static readonly Color Accent = Color.FromArgb(236, 72, 153);
+    public static readonly Color Text = Color.FromArgb(242, 243, 245);
+    public static readonly Color Muted = Color.FromArgb(148, 155, 164);
+    public static readonly Color Danger = Color.FromArgb(218, 55, 60);
 
     static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
     public static Font F(float size, FontStyle s = FontStyle.Regular) {
@@ -827,16 +827,49 @@ class Wizard : Form {
             Multiline = true, ReadOnly = true, TabStop = false, ScrollBars = ScrollBars.None, BorderStyle = BorderStyle.None,
             BackColor = Theme.Surface, ForeColor = Theme.Text, Font = Theme.F(9.5f),
             Location = new Point(14, 14), Size = new Size(500, 208),
-            Text = "Lumicord is a free, open source Discord client mod, licensed under the GNU GPL v3.0.\r\n\r\n" +
-                   "• Client mods are against Discord's Terms of Service. Your account could be limited or banned. Use at your own risk.\r\n\r\n" +
-                   "• Plugins run with the same access as Discord itself. Only install plugins you trust.\r\n\r\n" +
-                   "• Discord updates remove Lumicord. Run this installer again and choose Repair.\r\n\r\n" +
-                   "Credits\r\n" +
-                   "• Vencord by Vendicated (github.com/Vendicated): github.com/Vendicated/Vencord, GPL-3.0. Lumicord ships Vencord and its plugins.\r\n" +
-                   "• BetterDiscord by Jiiks (github.com/Jiiks), Zerebos (github.com/zerebos) and contributors: github.com/BetterDiscord/BetterDiscord, Apache-2.0. Lumicord runs BetterDiscord plugins and themes through its own BdApi.\r\n" +
-                   "• Lumicord is not affiliated with Vencord, BetterDiscord or Discord.\r\n\r\n" +
-                   "• Lumicord files are stored in " + DataDir + "\r\n\r\n" +
-                   "This software is provided as is, without warranty of any kind."
+            Text = "LUMICORD LICENSE AGREEMENT\r\n" +
+                   "Last updated: November 2026\r\n" +
+                   "\r\n" +
+                   "Please read this agreement carefully before installing Lumicord. By installing or using Lumicord you agree to these terms. If you do not agree, do not install Lumicord.\r\n" +
+                   "\r\n" +
+                   "1. LICENSE\r\n" +
+                   "Lumicord is free and open source software, licensed under the GNU General Public License, version 3 (GPL-3.0). You may use, copy, modify and distribute it under the terms of that license. The full license text is available at https://www.gnu.org/licenses/gpl-3.0.html and the source code at https://github.com/v1nx0/lumicord.\r\n" +
+                   "\r\n" +
+                   "2. NO AFFILIATION\r\n" +
+                   "Lumicord is an independent project. It is not made, endorsed or supported by Discord Inc., Vencord or BetterDiscord. \"Discord\" is a trademark of Discord Inc.\r\n" +
+                   "\r\n" +
+                   "3. DISCORD TERMS OF SERVICE\r\n" +
+                   "Modifying the Discord client is against Discord's Terms of Service. Discord may limit, suspend or ban accounts that use client mods. You install and use Lumicord entirely at your own risk and accept responsibility for any action taken against your account.\r\n" +
+                   "\r\n" +
+                   "4. PLUGINS AND THEMES\r\n" +
+                   "Plugins run inside Discord with the same access as Discord itself, including your account and messages. Only install plugins and themes from sources you trust. Lumicord's authors are not responsible for third-party plugins, themes or their effects.\r\n" +
+                   "\r\n" +
+                   "5. WHAT LUMICORD CHANGES ON YOUR COMPUTER\r\n" +
+                   "The installer modifies the selected Discord installation so Lumicord loads when Discord starts, and stores its files in:\r\n" +
+                   "    " + DataDir + "\r\n" +
+                   "Discord updates may remove Lumicord; run this installer again and choose Repair. Uninstall restores Discord and keeps your plugins, themes and settings.\r\n" +
+                   "\r\n" +
+                   "6. NETWORK AND PRIVACY\r\n" +
+                   "Lumicord does not collect, sell or send your personal data to its authors. It connects to the internet only to:\r\n" +
+                   "  - check GitHub (github.com) for Lumicord and Vencord updates; Lumicord updates are verified with a digital signature before they are installed;\r\n" +
+                   "  - load the Marketplace catalog and downloads from betterdiscord.app when you open the Marketplace;\r\n" +
+                   "  - reach addresses that installed plugins request. Plugins must ask before connecting to your local network.\r\n" +
+                   "\r\n" +
+                   "7. THIRD-PARTY COMPONENTS\r\n" +
+                   "  - Vencord by Vendicated and contributors (https://github.com/Vendicated/Vencord), GPL-3.0. Included with Lumicord.\r\n" +
+                   "  - BetterDiscord by Jiiks, Zerebos and contributors (https://github.com/BetterDiscord/BetterDiscord), Apache-2.0. Lumicord reimplements its plugin API to run BetterDiscord plugins and themes.\r\n" +
+                   "Each component remains under its own license.\r\n" +
+                   "\r\n" +
+                   "8. NO WARRANTY\r\n" +
+                   "Lumicord is provided \"as is\", without warranty of any kind, express or implied, including but not limited to the warranties of merchantability, fitness for a particular purpose and non-infringement. See sections 15 and 16 of the GPL-3.0.\r\n" +
+                   "\r\n" +
+                   "9. LIMITATION OF LIABILITY\r\n" +
+                   "To the maximum extent permitted by law, the authors and contributors of Lumicord are not liable for any damages, data loss, account actions or other harm arising from the use of, or inability to use, Lumicord, its plugins or its themes.\r\n" +
+                   "\r\n" +
+                   "10. CHANGES\r\n" +
+                   "New versions of Lumicord may come with an updated agreement. Continuing to use Lumicord after an update means you accept the updated terms.\r\n" +
+                   "\r\n" +
+                   "By checking \"I accept the license agreement\" you confirm that you have read and agree to these terms."
         };
         frame.Controls.Add(box);
         frame.Controls.Add(new SlimScroll(box) { Location = new Point(516, 14), Size = new Size(6, 208) });
