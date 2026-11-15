@@ -220,8 +220,8 @@ if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
         forget: host => ipcRenderer.invoke("LUMICORD_LOCAL_ACCESS_FORGET", String(host)),
     },
     log: (...a) => logLine("renderer", ...a.map(x => typeof x === "string" ? x : JSON.stringify(x))),
-    getSettings: () => readJSON(settingsPath, {}),
-    setSettings: s => { if (s && typeof s === "object") writeJSON(settingsPath, s); },
+    getSettings: () => { const s = readJSON(settingsPath, {}); return s && typeof s === "object" && !Array.isArray(s) ? s : {}; },
+    setSettings: s => { if (s && typeof s === "object" && !Array.isArray(s)) writeJSON(settingsPath, s); },
     loadData: name => readJSON(dataFile(name), {}),
     saveData: (name, obj) => { if (obj && typeof obj === "object") writeJSON(dataFile(name), obj); },
 

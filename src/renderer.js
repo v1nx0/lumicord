@@ -179,7 +179,7 @@
         let el = themeStyles[file];
         if (!el) { el = themeStyles[file] = document.createElement("style"); el.setAttribute("data-theme", file); }
         el.textContent = css;
-        themeHost.append(el);
+        themeHost.insertBefore(el, styles["lumicord-usercss"] || null);
     };
 
     // ---------------------------------------------------------------- toasts & modals
@@ -880,7 +880,7 @@
 
     const toggle = (on, onChange) => {
         const t = h("button", { class: "lumi-switch" + (on ? " on" : ""), role: "switch", ariaChecked: String(on) });
-        t.addEventListener("click", () => { onChange(!t.classList.contains("on")); });
+        t.addEventListener("click", () => { const next = !t.classList.contains("on"); t.classList.toggle("on", next); t.setAttribute("aria-checked", String(next)); onChange(next); });
         return t;
     };
     // Where an addon comes from, as plain gray text (no colored badges).
@@ -1157,7 +1157,7 @@
         offeredVersion = i.latest;
         showUpdateCard(i);
     }, e => log("update check failed:", e.message));
-    const custom = () => N.getSettings().custom || {};
+    const custom = () => { const c = N.getSettings().custom; return c && typeof c === "object" && !Array.isArray(c) ? c : {}; };
     const autoCheckIfOn = () => { if (custom().autoUpdate !== false) autoCheck(); };
     setTimeout(autoCheckIfOn, 10000);
     setInterval(autoCheckIfOn, 6 * 60 * 60 * 1000);
@@ -1165,21 +1165,29 @@
     // ---------------------------------------------------------------- Lumicord settings (settings.json "custom")
     const DEFAULT_CUSTOM = { accent: "#ec4899", radius: 8, animations: true, customCSS: "", autoUpdate: true };
     const ACCENTS = ["#ec4899", "#9b7bff", "#5865f2", "#23a55a", "#f0b232", "#f23f43", "#00a8fc"];
+    const customValues = () => {
+        const c = { ...DEFAULT_CUSTOM, ...custom() };
+        c.accent = typeof c.accent === "string" && /^#[0-9a-f]{6}$/i.test(c.accent) ? c.accent : DEFAULT_CUSTOM.accent;
+        const radius = Number(c.radius); c.radius = Number.isFinite(radius) ? Math.max(0, Math.min(16, radius)) : DEFAULT_CUSTOM.radius;
+        c.animations = c.animations !== false;
+        c.customCSS = typeof c.customCSS === "string" ? c.customCSS : "";
+        c.autoUpdate = c.autoUpdate !== false;
+        return c;
+    };
     function applyCustom() {
-        const c = Object.assign({}, DEFAULT_CUSTOM, custom());
-        const accent = /^#[0-9a-f]{6}$/i.test(c.accent) ? c.accent : DEFAULT_CUSTOM.accent;
-        const r = Math.max(0, Math.min(16, Number(c.radius) || 0));
-        addStyle("lumicord-custom", `:root{--lumi-accent:${accent};--lumi-accent-hover:${accent}cc}
-          .lumi-card,.lumi-btn,.lumi-input,.lumi-modal,.lumi-toast{border-radius:${r}px!important}
-          ${c.animations ? "" : ".lumi-page *,.lumi-modal *,.lumi-toast{animation:none!important;transition:none!important}"}`);
-        addStyle("lumicord-usercss", String(c.customCSS || ""));
+        const c = customValues();
+        addStyle("lumicord-custom", `:root{--lumi-accent:${c.accent};--lumi-accent-hover:${c.accent}cc}
+          .lumi-card,.lumi-btn,.lumi-input,.lumi-modal,.lumi-toast{border-radius:${c.radius}px!important}
+          ${c.animations ? "" : ".lumi-page,.lumi-page *,.lumi-modal,.lumi-modal *,.lumi-toast,.lumi-toast *{animation:none!important;transition:none!important}"}`);
+        addStyle("lumicord-usercss", c.customCSS);
+        themeHost.append(styles["lumicord-usercss"]);
     }
-    const setCustom = patch => { const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, patch); N.setSettings(cur); applyCustom(); };
+    const setCustom = patch => { const cur = N.getSettings(); cur.custom = { ...custom(), ...patch }; N.setSettings(cur); applyCustom(); };
 
     function settingsPage() {
-        const c = Object.assign({}, DEFAULT_CUSTOM, custom());
+        const c = customValues();
         const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
-        const sw = (on, fn) => { const t = toggle(on, v => { t.classList.toggle("on", v); t.setAttribute("aria-checked", String(v)); fn(v); }); return t; };
+        const sw = (on, fn) => toggle(on, fn);
         const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card" }, h("div", { class: "lumi-set-title" }, title), ...rows);
 
         const color = h("input", { type: "color", class: "lumi-color", value: c.accent, onInput: e => setCustom({ accent: e.target.value }) });
@@ -1187,9 +1195,8 @@
         const radiusVal = h("span", { class: "lumi-sp-val" }, c.radius + "px");
         const radius = h("input", { type: "range", class: "lumi-sp-slider", min: 0, max: 16, value: c.radius, onInput: e => { radiusVal.textContent = e.target.value + "px"; setCustom({ radius: Number(e.target.value) }); } });
 
-        let cssTimer;
         const css = h("textarea", { class: "lumi-input lumi-css", spellcheck: false, placeholder: "/* Your CSS, applied live on top of Discord and themes */", value: c.customCSS,
-            onInput: e => { clearTimeout(cssTimer); cssTimer = setTimeout(() => setCustom({ customCSS: e.target.value }), 300); } });
+            onInput: e => setCustom({ customCSS: e.target.value }) });
 
         const net = h("div", null);
         const drawNet = async () => {
@@ -1203,6 +1210,9 @@
         };
         drawNet();
 
+        const sidebarSwitch = sw(N.getSettings().nativeSidebar !== false, v => { const cur = N.getSettings(); cur.nativeSidebar = v; N.setSettings(cur); });
+        const updateSwitch = sw(c.autoUpdate, v => setCustom({ autoUpdate: v }));
+        const resetSwitch = (t, on) => { t.classList.toggle("on", on); t.setAttribute("aria-checked", String(on)); };
         return h("div", null,
             section("Appearance",
                 row("Accent color", "Used for buttons, switches and highlights in Lumicord.", swatches),
@@ -1211,14 +1221,14 @@
             section("Custom CSS", h("div", { class: "lumi-desc" }, "Small tweaks without making a theme. Saved automatically."), css),
             section("General",
                 row("Lumicord in the settings sidebar", "Show the Lumicord section in Discord's settings list. Takes effect after a restart.",
-                    sw(N.getSettings().nativeSidebar !== false, v => { const cur = N.getSettings(); cur.nativeSidebar = v; N.setSettings(cur); })),
-                row("Check for updates automatically", "Every 6 hours. You can always check on the Updater page.", sw(c.autoUpdate, v => setCustom({ autoUpdate: v }))),
+                    sidebarSwitch),
+                row("Check for updates automatically", "Every 6 hours. You can always check on the Updater page.", updateSwitch),
                 row("Addon folders", null, h("div", { class: "lumi-actions" },
                     h("button", { class: "lumi-btn", onClick: () => N.openFolder("plugin") }, "Plugins folder"),
                     h("button", { class: "lumi-btn", onClick: () => N.openFolder("theme") }, "Themes folder")))),
             section("Local network access", h("div", { class: "lumi-desc" }, "Choices you saved with \"Remember my choice\"."), net),
             h("button", { class: "lumi-btn", onClick: () => BdApi.UI.showConfirmationModal("Reset settings", "Reset appearance, custom CSS and general options to their defaults?", { danger: true, confirmText: "Reset",
-                onConfirm: () => { const cur = N.getSettings(); delete cur.custom; N.setSettings(cur); applyCustom(); toast("Settings reset"); } }) }, "Reset to defaults"));
+                onConfirm: () => { const cur = N.getSettings(); delete cur.custom; delete cur.nativeSidebar; N.setSettings(cur); applyCustom(); color.value = DEFAULT_CUSTOM.accent; radius.value = DEFAULT_CUSTOM.radius; radiusVal.textContent = DEFAULT_CUSTOM.radius + "px"; css.value = ""; resetSwitch(sidebarSwitch, true); resetSwitch(updateSwitch, true); toast("Settings reset"); } }) }, "Reset to defaults"));
     }
 
     const PAGES = {
