@@ -1211,6 +1211,51 @@
     }
     const setCustom = patch => { const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, normalizeCustom(patch)); N.setSettings(cur); applyCustom(); if (patch.updateInterval != null) scheduleAutoCheck(); };
 
+    // Our own color picker: the native <input type=color> popup is drawn by Windows and can't be styled.
+    const hex2hsv = hex => {
+        const n = parseInt(hex.slice(1), 16), r = (n >> 16 & 255) / 255, g = (n >> 8 & 255) / 255, b = (n & 255) / 255;
+        const max = Math.max(r, g, b), d = max - Math.min(r, g, b);
+        const hue = d === 0 ? 0 : max === r ? ((g - b) / d + 6) % 6 : max === g ? (b - r) / d + 2 : (r - g) / d + 4;
+        return [hue * 60, max ? d / max : 0, max];
+    };
+    const hsv2hex = (hh, ss, vv) => {
+        const f = k => { const x = (k + hh / 60) % 6; return Math.round((vv - vv * ss * Math.max(0, Math.min(x, 4 - x, 1))) * 255); };
+        return "#" + [f(5), f(3), f(1)].map(x => x.toString(16).padStart(2, "0")).join("");
+    };
+    function colorPicker(value, onChange) {
+        const btn = h("button", { class: "lumi-swatch lumi-swatch-solid", title: "Pick a color", style: { background: value } });
+        btn.addEventListener("click", e => {
+            e.stopPropagation();
+            if (document.querySelector(".lumi-cp")) return document.querySelector(".lumi-cp").remove();
+            let [hu, sa, va] = hex2hsv(btn.dataset.value || value);
+            const knob = h("div", { class: "lumi-cp-knob" }), area = h("div", { class: "lumi-cp-area" }, knob);
+            const hue = h("input", { type: "range", class: "lumi-cp-hue", min: 0, max: 359, value: Math.round(hu) });
+            const hex = h("input", { class: "lumi-input lumi-cp-hex", maxLength: 7, spellcheck: false });
+            const preview = h("div", { class: "lumi-cp-preview" });
+            const draw = (fromHex) => {
+                const v = hsv2hex(hu, sa, va);
+                area.style.background = `linear-gradient(to top,#000,transparent),linear-gradient(to right,#fff,hsl(${hu},100%,50%))`;
+                knob.style.left = sa * 100 + "%"; knob.style.top = (1 - va) * 100 + "%"; knob.style.background = v;
+                preview.style.background = v; btn.style.background = v; btn.dataset.value = v;
+                if (!fromHex) hex.value = v;
+                onChange(v);
+            };
+            const drag = ev => { const r = area.getBoundingClientRect(); sa = Math.max(0, Math.min(1, (ev.clientX - r.left) / r.width)); va = 1 - Math.max(0, Math.min(1, (ev.clientY - r.top) / r.height)); draw(); };
+            area.addEventListener("pointerdown", ev => { area.setPointerCapture(ev.pointerId); drag(ev); area.onpointermove = drag; });
+            area.addEventListener("pointerup", () => { area.onpointermove = null; });
+            hue.addEventListener("input", () => { hu = Number(hue.value); draw(); });
+            hex.addEventListener("input", () => { if (/^#[0-9a-f]{6}$/i.test(hex.value)) { [hu, sa, va] = hex2hsv(hex.value); hue.value = Math.round(hu); draw(true); } });
+            const pop = h("div", { class: "lumi-cp" }, area, h("div", { class: "lumi-cp-row" }, preview, hue), h("div", { class: "lumi-cp-row" }, hex,
+                h("div", { class: "lumi-cp-presets" }, ACCENTS.map(a => h("button", { class: "lumi-cp-preset", style: { background: a }, onClick: () => { [hu, sa, va] = hex2hsv(a); hue.value = Math.round(hu); draw(); } })))));
+            const r = btn.getBoundingClientRect();
+            Object.assign(pop.style, { top: Math.min(r.bottom + 8, innerHeight - 300) + "px", left: Math.max(8, r.right - 240) + "px" });
+            document.body.append(pop); draw();
+            const close = ev => { if (!pop.contains(ev.target) && ev.target !== btn) { pop.remove(); document.removeEventListener("pointerdown", close, true); } };
+            document.addEventListener("pointerdown", close, true);
+        });
+        return btn;
+    }
+
     function settingsPage() {
         const c = customValues();
         const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
@@ -1219,10 +1264,12 @@
         const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card", style: { animationDelay: (nth++ * 45) + "ms" } }, h("div", { class: "lumi-set-title" }, title), ...rows);
         const select = (value, options, key) => h("select", { class: "lumi-input", onChange: e => setCustom({ [key]: /^(1|6|24|1000|3000|5000|10000)$/.test(e.target.value) ? Number(e.target.value) : e.target.value }) }, options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value) }, label)));
 
-        const color = h("input", { type: "color", class: "lumi-color", value: c.accent, onInput: e => setCustom({ accent: e.target.value }) });
-        const pick = a => { color.value = a; [...swatches.children].forEach(b => b.classList && b.classList.toggle("on", b.title === a)); setCustom({ accent: a }); };
-        color.addEventListener("input", () => [...swatches.children].forEach(b => b.classList && b.classList.toggle("on", b.title === color.value)));
-        const swatches = h("div", { class: "lumi-swatches" }, ACCENTS.map(a => h("button", { class: "lumi-swatch" + (a === c.accent ? " on" : ""), title: a, style: { background: a }, onClick: () => pick(a) })), h("label", { class: "lumi-swatch lumi-swatch-custom", title: "Custom color" }, color));
+        const mark = a => [...swatches.children].forEach(b => b.classList.toggle("on", b.title === a));
+        const custom1 = colorPicker(c.accent, v => { mark(v); setCustom({ accent: v }); });
+        custom1.classList.add("lumi-swatch-custom");
+        const pick = a => { custom1.dataset.value = a; custom1.style.background = ""; mark(a); setCustom({ accent: a }); };
+        const swatches = h("div", { class: "lumi-swatches" }, ACCENTS.map(a => h("button", { class: "lumi-swatch" + (a === c.accent ? " on" : ""), title: a, style: { background: a }, onClick: () => pick(a) })), custom1);
+        if (ACCENTS.includes(c.accent)) custom1.style.background = "";
         const radiusVal = h("span", { class: "lumi-sp-val" }, c.radius + "px");
         const radius = h("input", { type: "range", class: "lumi-sp-slider", min: 0, max: 16, value: c.radius, onInput: e => { radiusVal.textContent = e.target.value + "px"; setCustom({ radius: Number(e.target.value) }); } });
         const scaleVal = h("span", { class: "lumi-sp-val" }, c.fontScale + "%");
@@ -1255,7 +1302,7 @@
         const page = h("div", null,
             section("Appearance",
                 row("Accent color", "Used for buttons, switches and highlights in Lumicord.", swatches),
-                row("Hover color", "Used when hovering Lumicord controls.", h("label", { class: "lumi-swatch lumi-swatch-custom lumi-swatch-solid", style: { background: c.hover } }, h("input", { type: "color", class: "lumi-color", value: c.hover, onInput: e => { e.target.parentNode.style.background = e.target.value; setCustom({ hover: e.target.value }); } }))),
+                row("Hover color", "Used when hovering Lumicord controls.", colorPicker(c.hover, v => setCustom({ hover: v }))),
                 row("Corner roundness", null, h("div", { class: "lumi-set-slider" }, radius, radiusVal)),
                 row("Font size", "Scale Lumicord pages only.", h("div", { class: "lumi-set-slider" }, scale, scaleVal)),
                 row("Page width", null, select(c.pageWidth, [["narrow", "Narrow"], ["normal", "Normal"], ["wide", "Wide"]], "pageWidth")),
@@ -1757,10 +1804,7 @@
       @keyframes lumi-set-in{from{opacity:0;transform:translateY(12px)}to{opacity:1;transform:none}}
       .lumi-set-card{margin-bottom:16px;padding:18px 20px 6px!important;animation:lumi-set-in .4s cubic-bezier(.2,.8,.2,1) both;
         border:1px solid var(--border-subtle,#ffffff12)!important;transform:none!important}
-      .lumi-set-card:hover{border-color:color-mix(in srgb,var(--lumi-accent) 35%,transparent)!important;box-shadow:0 6px 22px #0004!important}
-      .lumi-set-title{display:flex;align-items:center;gap:10px;font-size:12px;font-weight:700;letter-spacing:.06em;text-transform:uppercase;
-        color:var(--lumi-accent);margin:0 0 6px;padding-bottom:10px;border-bottom:1px solid var(--border-subtle,#ffffff12)}
-      .lumi-set-title::before{content:"";width:4px;height:14px;border-radius:2px;background:var(--lumi-accent);box-shadow:0 0 10px var(--lumi-accent)}
+      .lumi-set-title{font-size:16px;font-weight:600;color:var(--header-primary,#fff);margin:0 0 6px;padding-bottom:10px;border-bottom:1px solid var(--border-subtle,#ffffff12)}
       .lumi-set-card .lumi-row{padding:12px 8px;margin:0 -8px;border-radius:8px;transition:background .18s}
       .lumi-set-card .lumi-row:hover{background:#ffffff08}
       .lumi-set-card .lumi-row:last-child{border-bottom:0}
@@ -1788,7 +1832,19 @@
       .lumi-set-card .lumi-input:focus{border-color:var(--lumi-accent)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--lumi-accent) 25%,transparent)!important}
       .lumi-css{width:100%;min-height:170px;margin:10px 0 14px;font-family:Consolas,"Cascadia Code",monospace;font-size:13px;line-height:1.55;
         resize:vertical;box-sizing:border-box;tab-size:2;transition:border-color .15s,box-shadow .15s}
-      .lumi-switch.on{box-shadow:0 0 12px color-mix(in srgb,var(--lumi-accent) 45%,transparent)}`);
+      .lumi-swatch-custom:not([style*=background]){background:conic-gradient(#f23f43,#f0b232,#23a55a,#00a8fc,#9b7bff,#ec4899,#f23f43)}
+      .lumi-cp{position:fixed;z-index:10000;width:240px;padding:12px;border-radius:10px;background:var(--background-floating,#111214);
+        border:1px solid var(--border-subtle,#ffffff14);box-shadow:0 10px 30px #0008;animation:lumi-pop .16s ease-out both;display:flex;flex-direction:column;gap:10px}
+      .lumi-cp-area{position:relative;height:140px;border-radius:8px;cursor:crosshair;touch-action:none}
+      .lumi-cp-knob{position:absolute;width:14px;height:14px;margin:-7px 0 0 -7px;border-radius:50%;border:2px solid #fff;box-shadow:0 1px 4px #000a;pointer-events:none}
+      .lumi-cp-row{display:flex;gap:10px;align-items:center}
+      .lumi-cp-preview{width:28px;height:28px;border-radius:50%;flex-shrink:0;box-shadow:inset 0 0 0 1px #0004}
+      .lumi-cp-hue{-webkit-appearance:none;appearance:none;flex:1;height:10px;border-radius:5px;cursor:pointer;
+        background:linear-gradient(90deg,red,#ff0,lime,cyan,blue,#f0f,red)}
+      .lumi-cp-hue::-webkit-slider-thumb{-webkit-appearance:none;width:16px;height:16px;border-radius:50%;background:#fff;border:0;box-shadow:0 1px 4px #000a}
+      .lumi-cp-hex{width:86px;min-width:0!important;padding:6px 8px!important;font-family:Consolas,monospace;text-transform:uppercase}
+      .lumi-cp-presets{display:flex;gap:4px;flex-wrap:wrap}
+      .lumi-cp-preset{width:16px;height:16px;border-radius:50%;border:0;padding:0;cursor:pointer;transition:transform .15s}.lumi-cp-preset:hover{transform:scale(1.2)}`);
     applyCustom();
 
     window.Lumicord = { addons, settings, BdApi, Webpack, Patcher, open: openStandalone, setEnabled, loadPlugin, loadTheme };
