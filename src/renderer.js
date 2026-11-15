@@ -1005,11 +1005,11 @@
         const q = h("input", { class: "lumi-input lumi-search", placeholder: "Search the marketplace…" });
         const sort = dropdown([["downloads", "Most downloaded"], ["likes", "Most liked"], ["name", "Name"]], "downloads");
         sort.classList.add("lumi-sort");
-        const grid = h("div", { class: "lumi-list" }); // one column, like the installed list
+        const grid = h("div", { class: "lumi-mgrid" }); // compact card grid, like the BetterDiscord store
         const draw = () => {
             grid.textContent = "";
             const data = storeCache[type];
-            if (!data) { for (let i = 0; i < 6; i++) grid.append(h("div", { class: "lumi-card lumi-skeleton" })); return; }
+            if (!data) { for (let i = 0; i < 6; i++) grid.append(h("div", { class: "lumi-mcard lumi-skeleton" })); return; }
             if (data instanceof Error) { grid.append(h("div", { class: "lumi-empty" }, "Could not load the marketplace: " + data.message)); return; }
             const s = q.value.toLowerCase();
             const items = data.filter(a => (a.name + " " + a.description + " " + a.author + " " + a.tags.join(" ")).toLowerCase().includes(s))
@@ -1043,18 +1043,19 @@
                     img.onerror = () => img.replaceWith("No preview image available.");
                     modal(a.name, img, [{ label: "Close" }]);
                 } }, svg("themes", 18));
-                grid.append(h("div", { class: "lumi-card lumi-anim", style: { animationDelay: Math.min(n++ * 20, 300) + "ms" } },
-                    h("div", { class: "lumi-card-top" },
-                        h("div", { class: "lumi-card-title" },
-                            h("span", { class: "lumi-name" }, a.name),
-                            a.version && h("span", { class: "lumi-ver" }, "v" + a.version),
-                            h("span", { class: "lumi-author" }, "by " + a.author)),
-                        btn),
-                    custom().showThumbnails !== false && a.thumbnail && h("img", { class: "lumi-market-thumb", src: a.thumbnail, alt: "", onError: e => e.currentTarget.remove() }),
-                    h("div", { class: "lumi-desc lumi-clamp" }, a.description || "No description."),
-                    h("div", { class: "lumi-card-foot" },
-                        h("span", { class: "lumi-source" }, `${a.downloads.toLocaleString()} downloads · ${a.likes.toLocaleString()} likes`),
-                        h("div", { class: "lumi-actions" }, preview))));
+                // BetterDiscord-store style card: small thumbnail on top, name/author, 2-line description, stats + action
+                const thumb = custom().showThumbnails !== false && a.thumbnail
+                    ? h("div", { class: "lumi-mthumb", title: "Preview", onClick: () => preview && preview.click() }, h("img", { src: a.thumbnail, alt: "", loading: "lazy", onError: e => { e.currentTarget.parentNode.classList.add("lumi-mthumb-none"); e.currentTarget.remove(); } }))
+                    : h("div", { class: "lumi-mthumb lumi-mthumb-none" }, svg(type === "theme" ? "themes" : "plugins", 28));
+                grid.append(h("div", { class: "lumi-mcard lumi-anim", style: { animationDelay: Math.min(n++ * 20, 300) + "ms" } },
+                    thumb,
+                    h("div", { class: "lumi-mbody" },
+                        h("div", { class: "lumi-mname", title: a.name }, a.name, a.version && h("span", { class: "lumi-ver" }, " v" + a.version)),
+                        h("div", { class: "lumi-mauthor" }, "by " + a.author),
+                        h("div", { class: "lumi-mdesc" }, a.description || "No description.")),
+                    h("div", { class: "lumi-mfoot" },
+                        h("span", { class: "lumi-mstats" }, svg("update", 13), " " + a.downloads.toLocaleString(), h("span", { class: "lumi-mheart" }, " ♥ " + a.likes.toLocaleString())),
+                        btn)));
             }
             if (!items.length) grid.append(h("div", { class: "lumi-empty" }, "Nothing matches your search."));
         };
@@ -1940,6 +1941,25 @@
         Object.assign(tip.style, { left: Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2)) + "px", top: (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px" });
         el.addEventListener("mouseleave", () => { if (tip) { tip.remove(); tip = null; } }, { once: true });
     });
+
+    addStyle("lumicord-market", `
+      .lumi-mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
+      .lumi-mcard{display:flex;flex-direction:column;min-height:250px;border-radius:8px;overflow:hidden;background:var(--background-secondary,#2b2d31);
+        border:1px solid var(--border-subtle,#ffffff12);transition:transform .18s,border-color .18s,box-shadow .18s}
+      .lumi-mcard:hover{transform:translateY(-2px);border-color:#ffffff26;box-shadow:0 6px 18px #0005}
+      .lumi-mcard.lumi-skeleton{min-height:250px}
+      .lumi-mthumb{aspect-ratio:16/9;background:var(--background-tertiary,#1e1f22);overflow:hidden;cursor:zoom-in;flex-shrink:0;display:flex;align-items:center;justify-content:center;color:var(--text-muted,#949ba4)}
+      .lumi-mthumb img{width:100%;height:100%;object-fit:cover;display:block}
+      .lumi-mthumb-none{cursor:default}
+      .lumi-mbody{padding:10px 12px 0;flex:1;min-width:0}
+      .lumi-mname{font-weight:600;font-size:15px;color:var(--header-primary,#fff);white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
+      .lumi-mname .lumi-ver{font-weight:400;font-size:12px;color:var(--text-muted,#949ba4)}
+      .lumi-mauthor{font-size:12px;color:var(--text-muted,#949ba4);margin-top:1px}
+      .lumi-mdesc{font-size:13px;line-height:1.35;color:var(--text-normal,#dbdee1);margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
+      .lumi-mfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px}
+      .lumi-mstats{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--text-muted,#949ba4);white-space:nowrap;overflow:hidden}
+      .lumi-mheart{margin-left:6px}
+      .lumi-mfoot .lumi-btn{padding:5px 12px;font-size:13px;flex-shrink:0}`);
 
     window.Lumicord = { addons, settings, BdApi, Webpack, Patcher, open: openStandalone, setEnabled, loadPlugin, loadTheme };
     log("loaded", addons.plugin.length, "plugins,", addons.theme.length, "themes");
