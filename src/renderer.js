@@ -1277,6 +1277,7 @@
                 row("Import settings", "Only recognized, valid settings are applied.", (() => { const input = h("input", { type: "file", accept: "application/json", style: { display: "none" } }); const b = h("button", { class: "lumi-btn", onClick: () => input.click() }, "Import"); input.onchange = () => { const f = input.files[0]; if (!f) return; f.text().then(JSON.parse).then(v => { const clean = normalizeCustom(v); if (!Object.keys(clean).length && Object.keys(v || {}).length) throw new Error("No valid settings found"); const cur = N.getSettings(); cur.custom = Object.assign({}, cur.custom, clean); N.setSettings(cur); applyCustom(); scheduleAutoCheck(); toast("Settings imported", { type: "success" }); }).catch(e => toast("Import failed: " + e.message, { type: "error" })); }; return h("div", null, input, b); })())),
             h("button", { class: "lumi-btn", onClick: () => BdApi.UI.showConfirmationModal("Reset settings", "Reset appearance, custom CSS and general options to their defaults?", { danger: true, confirmText: "Reset",
                 onConfirm: () => { const cur = N.getSettings(); delete cur.custom; delete cur.nativeSidebar; N.setSettings(cur); applyCustom(); scheduleAutoCheck(); page.replaceWith(settingsPage()); toast("Settings reset"); } }) }, "Reset to defaults"));
+        return page;
     }
 
     const PAGES = {
