@@ -371,8 +371,9 @@
     const dataCache = {};
     const Data = {
         load: (p, k) => { const d = dataCache[p] || (dataCache[p] = N.loadData(p)); return d[k]; },
-        save: (p, k, v) => { const d = dataCache[p] || (dataCache[p] = N.loadData(p)); d[k] = JSON.parse(JSON.stringify(v === undefined ? null : v)); N.saveData(p, d); },
+        save: (p, k, v) => { const d = dataCache[p] || (dataCache[p] = N.loadData(p)); d[k] = v === undefined ? undefined : JSON.parse(JSON.stringify(v)); N.saveData(p, d); },
         delete: (p, k) => { const d = dataCache[p] || (dataCache[p] = N.loadData(p)); delete d[k]; N.saveData(p, d); },
+        recache: async p => { delete dataCache[p]; dataCache[p] = N.loadData(p); return true; },
     };
 
     // ---------------------------------------------------------------- addons registry
@@ -392,6 +393,12 @@
         reload: n => { const a = findAddon(type, n); if (a && a.enabled) { setEnabled(a, false); setEnabled(a, true); } },
         get: n => { const a = findAddon(type, n); return a && Object.assign({ instance: a.instance, filename: a.file }, a.meta); },
         getAll: () => addons[type].map(a => Object.assign({ instance: a.instance, filename: a.file }, a.meta)),
+        openSettings: n => {
+            const a = findAddon(type, n);
+            if (!a || !a.enabled || !a.instance || typeof a.instance.getSettingsPanel !== "function") return false;
+            openAddonSettings(a);
+            return true;
+        },
         folder: N.folders[type],
     });
     const findAddon = (type, n) => addons[type].find(a => a.name === n || a.file === n || (a.meta && a.meta.name === n));
@@ -517,21 +524,43 @@
         return h("div", { class: "lumi-settings-panel" }, ((opts && opts.settings) || []).map(s => build(s, null)));
     }
 
+    const commandCallers = new Map();
+    const commandTypes = { OptionTypes: {}, CommandTypes: {}, InputTypes: {}, MessageEmbedTypes: {} };
+    const Commands = {
+        Types: commandTypes,
+        register(caller, command) {
+            if (caller === "BetterDiscord") throw new Error("Plugins cannot register commands as BetterDiscord");
+            if (typeof caller !== "string" || !command || !command.id || !command.name || typeof command.execute !== "function") return;
+            if (!commandCallers.has(caller)) commandCallers.set(caller, new Map());
+            commandCallers.get(caller).set(command.id, command);
+            return () => Commands.unregister(caller, command.id);
+        },
+        unregister: (caller, id) => { const commands = commandCallers.get(caller); if (commands) { commands.delete(id); if (!commands.size) commandCallers.delete(caller); } },
+        unregisterAll: caller => commandCallers.delete(caller),
+        getCommandsByCaller: caller => [...(commandCallers.get(caller) || new Map()).values()],
+    };
+    const boundCommands = name => ({ Types: commandTypes, register: command => Commands.register(name, command), unregister: id => Commands.unregister(name, id), unregisterAll: () => Commands.unregisterAll(name), getCommandsByCaller: () => Commands.getCommandsByCaller(name) });
+    const boundHooks = name => Object.assign({}, BdApi.Hooks, { useData: key => Data.load(name, key) });
+
     function BdApi(name) {
         if (!(this instanceof BdApi)) return new BdApi(name);
         // Bound API: plugin name is filled in automatically.
         this.Patcher = { before: (...a) => Patcher.before(name, ...a), after: (...a) => Patcher.after(name, ...a), instead: (...a) => Patcher.instead(name, ...a), unpatchAll: () => Patcher.unpatchAll(name), getPatchesByCaller: () => Patcher.getPatchesByCaller(name) };
-        this.Data = { load: k => Data.load(name, k), save: (k, v) => Data.save(name, k, v), delete: k => Data.delete(name, k) };
+        this.Data = { load: k => Data.load(name, k), save: (k, v) => Data.save(name, k, v), delete: k => Data.delete(name, k), recache: () => Data.recache(name) };
         this.DOM = Object.assign({}, BdApi.DOM, { addStyle: (id, css) => css === undefined ? addStyle(name, id) : addStyle(name + "-" + id, css), removeStyle: id => removeStyle(id ? name + "-" + id : name) });
-        this.Logger = { log: (...a) => console.log(`[${name}]`, ...a), info: (...a) => console.info(`[${name}]`, ...a), warn: (...a) => console.warn(`[${name}]`, ...a), error: (...a) => console.error(`[${name}]`, ...a) };
-        for (const k of ["React", "ReactDOM", "Webpack", "UI", "Utils", "Plugins", "Themes", "Net", "version", "Components", "ContextMenu", "Hooks", "ReactUtils"]) Object.defineProperty(this, k, { get: () => BdApi[k] });
+        this.Logger = { log: (...a) => console.log(`[${name}]`, ...a), info: (...a) => console.info(`[${name}]`, ...a), warn: (...a) => console.warn(`[${name}]`, ...a), error: (...a) => console.error(`[${name}]`, ...a), debug: (...a) => console.debug(`[${name}]`, ...a), stacktrace: (m, e) => console.error(`[${name}] ${m}`, e) };
+        this.Commands = boundCommands(name);
+        this.Hooks = boundHooks(name);
+        for (const k of ["React", "ReactDOM", "Webpack", "UI", "Utils", "Plugins", "Themes", "Net", "version", "Components", "ContextMenu", "ReactUtils"]) Object.defineProperty(this, k, { get: () => BdApi[k] });
     }
     Object.defineProperty(BdApi, "React", { get: Webpack.React });
     Object.defineProperty(BdApi, "ReactDOM", { get: Webpack.ReactDOM });
     Object.assign(BdApi, {
         version: "1.12.0",
-        Webpack, Patcher, Data,
+        Webpack, Patcher, Data, Commands,
         DOM: {
+            get screenWidth() { return Math.max(document.documentElement.clientWidth, window.innerWidth || 0); },
+            get screenHeight() { return Math.max(document.documentElement.clientHeight, window.innerHeight || 0); },
             addStyle, removeStyle,
             createElement: (tag, opts, ...kids) => h(tag, opts && opts.className ? Object.assign({}, opts, { class: opts.className }) : opts, ...kids),
             parseHTML: (html, fragment = false) => {
@@ -539,9 +568,12 @@
                 return fragment ? t.content : t.content.childNodes.length === 1 ? t.content.firstChild : t.content.childNodes;
             },
             onRemoved: (node, cb) => { const o = new MutationObserver(() => { if (!node.isConnected) { o.disconnect(); cb(); } }); o.observe(document.body, { childList: true, subtree: true }); return () => o.disconnect(); },
+            onAdded: (selector, cb) => { const o = new MutationObserver(() => { const n = document.querySelector(selector); if (n) { o.disconnect(); cb(n); } }); o.observe(document.body, { childList: true, subtree: true }); const n = document.querySelector(selector); if (n) { o.disconnect(); cb(n); } return () => o.disconnect(); },
+            animate: (update, duration, o = {}) => { let stopped = false, start; const tick = now => { if (stopped) return; start ??= now; const p = Math.min(1, (now - start) / duration); update((o.timing || (x => x))(p)); if (p < 1) requestAnimationFrame(tick); }; requestAnimationFrame(tick); return () => { stopped = true; }; },
         },
         UI: {
             showToast: toast,
+            createTooltip: (node, content) => { node.title = typeof content === "string" ? content : content && content.textContent || ""; return node; },
             // Sticky notice with optional buttons ({ label, onClick }); returns a function that closes it.
             showNotice: (content, o) => {
                 o = o || {};
@@ -556,7 +588,12 @@
             },
             // BetterDiscord desktop notification card; shown as a toast with the title.
             showNotification: n => { n = n || {}; toast((n.title ? n.title + ": " : "") + (typeof n.content === "string" ? n.content : ""), { type: n.type || "info", timeout: n.duration || 5000 }); return { close: () => { } }; },
+            showChangelogModal: o => modal((o && o.title) || "Changelog", (o && o.subtitle) || ""),
+            showInviteModal: code => modal("Join Server", "Invite: " + code),
+            openDialog: o => N.openDialog ? N.openDialog(o) : Promise.reject(new Error("Native dialogs are unavailable")),
+            openFloatingWindow: o => { if (!o || typeof o.id !== "string") throw new Error("Floating window requires id"); const close = modal(o.title || o.id, o.children || o.content); return { close, isOpened: () => !!document.querySelector(".lumi-backdrop") }; },
             buildSettingsPanel: buildSettingsPanel,
+            buildSettingItem: setting => buildSettingsPanel({ settings: [setting] }).firstChild,
             alert: (title, content) => modal(title, content),
             showConfirmationModal: (title, content, o) => {
                 o = o || {};
@@ -581,12 +618,19 @@
             },
             debounce: (fn, ms) => { let t; return (...a) => { clearTimeout(t); t = setTimeout(() => fn(...a), ms); }; },
             escapeHTML: s => String(s).replace(/[&<>"']/g, c => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;" }[c])),
-            className: (...a) => a.flat().filter(x => typeof x === "string" && x).join(" "),
-            extend: Object.assign,
+            className: (...a) => { const out = []; const add = x => { if (!x) return; if (typeof x === "string" || typeof x === "number") out.push(x); else if (Array.isArray(x)) x.forEach(add); else if (typeof x === "object") Object.keys(x).forEach(k => x[k] && out.push(k)); }; a.forEach(add); return out.join(" "); },
+            extend: (target, ...sources) => { for (const s of sources) for (const k in s || {}) if (s[k] && typeof s[k] === "object" && !Array.isArray(s[k])) target[k] = BdApi.Utils.extend(target[k] && typeof target[k] === "object" ? target[k] : {}, s[k]); else target[k] = s[k]; return target; },
+            getNestedValue: (o, path) => String(path).split(".").reduce((v, k) => v == null ? undefined : v[k], o),
         },
         Net: { fetch: (...a) => netFetch(...a) }, // netFetch is defined further down
         // Discord components exposed by Vencord (Tooltip is what plugins use most).
-        Components: { get Tooltip() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Tooltip; } },
+        Components: {
+            get Tooltip() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Tooltip; },
+            get Text() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Text; },
+            get Flex() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Flex; },
+            get Button() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Button; },
+            get Spinner() { const C = window.Vencord && window.Vencord.Webpack.Common; return C && C.Spinner; },
+        },
         Hooks: {
             // re-renders the component whenever one of the stores changes; prefers Discord's own hook (via Vencord)
             useStateFromStores(stores, getState, deps, areEqual) {
@@ -602,13 +646,21 @@
                 }, deps || []);
                 return state;
             },
+            useForceUpdate() { const R = Webpack.React(); const [, set] = R.useState(0); return () => set(x => x + 1); },
+            useData(p, k) { return Data.load(p, k); },
         },
         ReactUtils: {
+            get rootInstance() { const r = document.getElementById("app-mount"); return r && r._reactRootContainer && r._reactRootContainer._internalRoot && r._reactRootContainer._internalRoot.current; },
             getInternalInstance: el => { if (!el) return undefined; const k = Object.keys(el).find(x => x.startsWith("__reactFiber$") || x.startsWith("__reactInternalInstance$")); return k ? el[k] : undefined; },
             getOwnerInstance(el) {
                 for (let f = BdApi.ReactUtils.getInternalInstance(el); f; f = f.return) if (f.stateNode && typeof f.stateNode.forceUpdate === "function") return f.stateNode;
                 return undefined;
             },
+            wrapElement: element => () => element,
+            wrapInHooks: component => component,
+            getType: component => component && (component.type || component.render || component),
+            rerenderComponent: () => { },
+            createNodePatcher: () => ({ patch: () => () => { }, unpatchAll: () => { } }),
         },
         ContextMenu: contextMenuApi(),
         Plugins: addonApi("plugin"),
@@ -771,8 +823,12 @@
                 let P = module.exports;
                 if (P && typeof P !== "function" && P.default) P = P.default;
                 if (typeof P !== "function") throw new Error("Plugin does not export a class or function");
-                const isClass = /^class[\s{]/.test(Function.prototype.toString.call(P));
-                a.instance = isClass ? new P(a.meta) : P(a.meta);
+                a.instance = P.prototype ? new P(a.meta) : P(a.meta);
+                if (!a.instance || typeof a.instance.start !== "function" || typeof a.instance.stop !== "function") throw new Error("Missing start or stop function");
+                for (const key of ["name", "author", "description", "version"]) {
+                    if (!a.meta[key] && typeof a.instance["get" + key[0].toUpperCase() + key.slice(1)] === "function") a.meta[key] = String(a.instance["get" + key[0].toUpperCase() + key.slice(1)]());
+                }
+                a.name = a.meta.name || a.name;
                 // BetterDiscord runs load() when the plugin is loaded, even if it stays disabled
                 if (a.instance && typeof a.instance.load === "function") { try { a.instance.load(); } catch (e) { console.error("[Lumicord]", a.name, "load() failed", e); } a.loaded = true; }
             } else if (file.endsWith(".vc.js")) {
@@ -826,7 +882,7 @@
                     else i.start && i.start(api);
                 } else {
                     try { i.stop && i.stop(); }
-                    finally { Patcher.unpatchAll(a.name); }
+                    finally { Patcher.unpatchAll(a.name); Commands.unregisterAll(a.name); }
                 }
             }
             a.enabled = on;
@@ -843,6 +899,19 @@
         save();
     }
     const api = { addCSS: (css, id) => { id = id || "native-" + Math.random().toString(36).slice(2); addStyle(id, css); return () => removeStyle(id); } };
+
+    const notifyPlugins = method => addons.plugin.forEach(a => {
+        if (!a.enabled || !a.instance || typeof a.instance[method] !== "function") return;
+        try { a.instance[method](); } catch (e) { console.error("[Lumicord]", a.name, method + "() failed", e); }
+    });
+    const pluginObserver = new MutationObserver(mutations => mutations.forEach(m => addons.plugin.forEach(a => {
+        if (!a.enabled || !a.instance || typeof a.instance.observer !== "function") return;
+        try { a.instance.observer(m); } catch (e) { console.error("[Lumicord]", a.name, "observer() failed", e); }
+    })));
+    pluginObserver.observe(document, { childList: true, subtree: true });
+    window.addEventListener("popstate", () => notifyPlugins("onSwitch"));
+    window.addEventListener("hashchange", () => notifyPlugins("onSwitch"));
+    if (window.navigation && window.navigation.addEventListener) window.navigation.addEventListener("navigate", () => notifyPlugins("onSwitch"));
 
     const { plugins, themes } = N.listAddons();
     themes.sort((x, y) => x.file.localeCompare(y.file, "en")).forEach(t => { const a = loadTheme(t.file, t.source); if (settings.themes[t.file]) setEnabled(a, true); });
@@ -942,6 +1011,10 @@
             return modal(a.name + " settings", box, [{ label: "Done", primary: true }]);
         }
         if (i && typeof i.settingsAbout === "string") return modal(a.name, i.settingsAbout);
+    }
+
+    function openAddonSettings(a) {
+        openPage(a.type === "plugin" ? "plugins" : "themes");
     }
     const hasSettings = a => a.instance && ((a.kind === "bd" && typeof a.instance.getSettingsPanel === "function") || (a.kind === "vencord" && a.instance.settings && a.instance.settings.def));
 
