@@ -237,7 +237,7 @@
         const foot = h("div", { class: "lumi-modal-foot" }, (buttons || [{ label: "Okay", primary: true }]).map(b =>
             h("button", { class: "lumi-btn" + (b.primary ? " lumi-primary" : "") + (b.danger ? " lumi-danger" : ""), onClick: () => { close(); if (b.onClick) b.onClick(); } }, b.label)));
         back.append(h("div", { class: "lumi-modal" }, h("h2", null, title), body, foot));
-        document.body.append(back);
+        document.documentElement.append(back); // not <body>: a transform on body (themes, Discord layers) would break centering
         renderInto(body, content);
         return close;
     };
@@ -1596,7 +1596,7 @@
       .lumi-nav-item{display:flex;align-items:center;gap:10px;background:none;border:0;color:var(--interactive-normal,#b5bac1);padding:9px 10px;border-radius:6px;font:inherit;font-size:15px;cursor:pointer;text-align:left}
       .lumi-nav-item:hover{background:#ffffff0d;color:var(--interactive-hover,#fff)} .lumi-nav-item.active{background:#ffffff17;color:#fff}
       .lumi-main{flex:1;min-width:0}
-      .lumi-backdrop{position:fixed;inset:0;z-index:1002;background:#000a;display:flex;align-items:center;justify-content:center}
+      .lumi-backdrop{position:fixed;inset:0;width:100vw;height:100vh;z-index:1002;background:#000a;display:flex;align-items:center;justify-content:center}
       .lumi-modal{background:var(--modal-background,var(--background-primary,#313338));color:var(--text-normal,#dbdee1);border-radius:12px;width:min(520px,92vw);max-height:85vh;display:flex;flex-direction:column;box-shadow:0 10px 40px #0008}
       .lumi-modal h2{margin:0;padding:18px 20px 8px;font-size:20px;color:var(--header-primary,#f2f3f5)}
       .lumi-modal-body{padding:4px 20px 16px;overflow:auto;font-size:14px;line-height:1.4}
