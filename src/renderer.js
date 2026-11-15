@@ -989,7 +989,7 @@
     // check for them when their file is evaluated.
     const startEnabled = () => plugins
         .sort((x, y) => x.file.localeCompare(y.file, "en"))
-        .forEach(p => { const a = loadPlugin(p.file, p.source); if (settings.plugins[p.file] && !a.error) setEnabled(a, true); });
+        .forEach(p => { const a = loadPlugin(p.file, p.source); if (settings.plugins[p.file] && !a.error) setEnabled(a, true); }) || corePlugins.forEach(a => { if (settings.plugins[a.file]) setEnabled(a, true); });
     let tries = 0;
     const waitReady = setInterval(() => {
         const ready = getWreq() && Webpack.React();
@@ -1087,14 +1087,72 @@
     }
     const hasSettings = a => a.instance && ((a.kind === "bd" && typeof a.instance.getSettingsPanel === "function") || (a.kind === "vencord" && a.instance.settings && a.instance.settings.def));
 
-    function addonList(type, rerender) {
-        const q = h("input", { class: "lumi-input lumi-search", placeholder: `Search ${type}s…` });
+    // ---------------------------------------------------------------- built-in Lumicord plugins (Vencord-style, no BD files)
+    const cssPlugin = css => function () { return { start() { addStyle("core-" + this.id, css); }, stop() { removeStyle("core-" + this.id); } }; };
+    const coreDefs = [
+        { id: "ClearURLs", description: "Removes tracking parameters (utm_, fbclid, si…) from links before you send them.", make() {
+            const clean = t => t.replace(/https?:\/\/[^\s<>]+/g, u => { try { const x = new URL(u); [...x.searchParams.keys()].filter(k => /^(utm_|fbclid|gclid|mc_eid|igshid|si$|ref_src|ref$)/i.test(k)).forEach(k => x.searchParams.delete(k)); return x.toString() === u ? u : x.toString().replace(/\?$/, ""); } catch { return u; } });
+            return { start() { const M = Webpack.getByKeys("sendMessage", "editMessage"); if (!M) throw new Error("Message module not found");
+                Patcher.before("ClearURLs", M, "sendMessage", (_, a) => { if (a[1] && typeof a[1].content === "string") a[1].content = clean(a[1].content); });
+                Patcher.before("ClearURLs", M, "editMessage", (_, a) => { if (a[2] && typeof a[2].content === "string") a[2].content = clean(a[2].content); }); }, stop() { } };
+        }, clean: null },
+        { id: "SilentTyping", description: "Others won't see \"is typing…\" when you type.", make() {
+            return { start() { const M = Webpack.getByKeys("startTyping", "stopTyping"); if (!M) throw new Error("Typing module not found"); Patcher.instead("SilentTyping", M, "startTyping", () => { }); }, stop() { } };
+        } },
+        { id: "CopyCodeBlocks", description: "Adds a Copy button to code blocks in messages.", make() {
+            let mo; const add = root => root.querySelectorAll && root.querySelectorAll("pre > code:not([data-lumi-copy])").forEach(c => {
+                c.dataset.lumiCopy = "1"; const pre = c.parentNode; pre.style.position = "relative";
+                pre.append(h("button", { class: "lumi-codecopy", onClick: e => { navigator.clipboard.writeText(c.textContent); e.currentTarget.textContent = "Copied"; } }, "Copy"));
+            });
+            return { start() { addStyle("core-copycode", ".lumi-codecopy{position:absolute;top:6px;right:6px;padding:2px 8px;font-size:12px;border:0;border-radius:4px;background:var(--background-secondary,#2b2d31);color:var(--text-normal,#dbdee1);cursor:pointer;opacity:0;transition:opacity .15s}pre:hover>.lumi-codecopy{opacity:1}");
+                add(document); mo = new MutationObserver(m => m.forEach(r => r.addedNodes.forEach(add))); mo.observe(document.body, { childList: true, subtree: true }); },
+                stop() { mo && mo.disconnect(); removeStyle("core-copycode"); document.querySelectorAll(".lumi-codecopy").forEach(b => b.remove()); document.querySelectorAll("[data-lumi-copy]").forEach(c => delete c.dataset.lumiCopy); } };
+        } },
+        { id: "QuickRestart", description: "Press Ctrl+Shift+R to restart Discord.", make() {
+            const key = e => { if (e.ctrlKey && e.shiftKey && !e.altKey && e.code === "KeyR") { e.preventDefault(); e.stopPropagation(); N.relaunch(); } };
+            return { start() { window.addEventListener("keydown", key, true); }, stop() { window.removeEventListener("keydown", key, true); } };
+        } },
+        { id: "HideGiftButton", description: "Hides the gift and sticker buttons in the message bar.", make: cssPlugin('button[aria-label="Send a gift"],div:has(>button[aria-label="Send a gift"]),button[aria-label="Open sticker picker"]{display:none!important}') },
+        { id: "HideNitroUpsells", description: "Hides the Nitro and Shop links in your DM list.", make: cssPlugin('li:has(a[href="/store"]),li:has(a[href="/shop"]),[class*="channel"]:has(>[class*="interactive"] a[href="/store"]),[class*="channel"]:has(>[class*="interactive"] a[href="/shop"]){display:none!important}') },
+        { id: "SquareAvatars", description: "Shows avatars with slightly rounded square corners.", make: cssPlugin('[class*="avatar"] img,img[class*="avatar"],foreignObject[mask*="avatar"]{border-radius:22%!important}foreignObject[mask*="avatar"]{mask:none!important}') },
+        { id: "NoReplyMention", description: "Replies don't ping the person you reply to by default.", make() {
+            return { start() { const M = Webpack.getByKeys("createPendingReply"); if (!M) throw new Error("Reply module not found"); Patcher.before("NoReplyMention", M, "createPendingReply", (_, a) => { if (a[0] && typeof a[0] === "object") a[0].shouldMention = false; }); }, stop() { } };
+        } },
+    ];
+    const corePlugins = coreDefs.map(d => {
+        const a = { type: "plugin", kind: "core", file: "core:" + d.id, name: d.id, meta: { name: d.id, description: d.description, author: "Lumicord" }, enabled: false, error: null };
+        a.instance = d.make.call({ id: d.id }); if (a.instance.start) { const s = a.instance.start; a.instance.start = () => s.call({ id: d.id }); }
+        if (a.instance.stop) { const s = a.instance.stop; a.instance.stop = () => s.call({ id: d.id }); }
+        return a;
+    });
+
+    function corePage() {
+        const q = h("input", { class: "lumi-input lumi-search", placeholder: "Search Lumicord plugins…" });
         const list = h("div", { class: "lumi-list" });
         const draw = () => {
             list.textContent = "";
-            const items = addons[type].filter(a => (a.name + " " + (a.meta.description || "")).toLowerCase().includes(q.value.toLowerCase()))
+            const items = corePlugins.filter(a => (a.name + " " + a.meta.description).toLowerCase().includes(q.value.toLowerCase()));
+            if (!items.length) list.append(h("div", { class: "lumi-empty" }, "Nothing matches your search."));
+            items.forEach((a, n) => {
+                let card; const sw = toggle(a.enabled, v => { setEnabled(a, v); sw.classList.toggle("on", a.enabled); card.classList.toggle("lumi-on", a.enabled); });
+                list.append(card = h("div", { class: "lumi-card lumi-anim" + (a.enabled ? " lumi-on" : ""), style: { animationDelay: Math.min(n * 30, 300) + "ms" } },
+                    h("div", { class: "lumi-card-top" }, h("div", { class: "lumi-card-title" }, h("span", { class: "lumi-name" }, a.name)), sw),
+                    h("div", { class: "lumi-desc" }, a.meta.description)));
+            });
+        };
+        q.addEventListener("input", draw); draw();
+        return h("div", null, h("div", { class: "lumi-note" }, "Plugins built into Lumicord. They apply right away, no restart needed."), h("div", { class: "lumi-toolbar" }, q), list);
+    }
+
+    function addonList(type, rerender) {
+        const q = h("input", { class: "lumi-input lumi-search", placeholder: `Search ${type}s…` });
+        const show = dropdown([["all", "All"], ["on", "Enabled"], ["off", "Disabled"]], "all");
+        const list = h("div", { class: "lumi-list" });
+        const draw = () => {
+            list.textContent = "";
+            const items = addons[type].filter(a => show.value === "all" || (show.value === "on") === !!a.enabled).filter(a => (a.name + " " + (a.meta.description || "")).toLowerCase().includes(q.value.toLowerCase()))
                 .sort((x, y) => custom().addonSort === "enabled" ? Number(y.enabled) - Number(x.enabled) || x.name.localeCompare(y.name) : x.name.localeCompare(y.name));
-            if (!items.length) list.append(h("div", { class: "lumi-empty" }, addons[type].length ? "Nothing matches your search." : `No ${type}s yet. Get some from the Marketplace tab, or drop files into the ${type}s folder.`));
+            if (!items.length) list.append(h("div", { class: "lumi-empty" }, addons[type].length ? "Nothing matches your search or filter." : `No ${type}s yet. Get some from the Marketplace tab, or drop files into the ${type}s folder.`));
             let n = 0;
             for (const a of items) {
                 let card;
@@ -1132,10 +1190,10 @@
                     h("div", { class: "lumi-card-foot" }, badge(a.kind), btns)));
             }
         };
-        q.addEventListener("input", draw);
+        q.addEventListener("input", draw); show.addEventListener("change", draw);
         draw();
         return h("div", null,
-            h("div", { class: "lumi-toolbar" }, q, h("button", { class: "lumi-btn", onClick: () => N.openFolder(type) }, svg("folder", 16), " Open folder")),
+            h("div", { class: "lumi-toolbar" }, q, show, h("button", { class: "lumi-btn", onClick: () => N.openFolder(type) }, svg("folder", 16), " Open folder")),
             list);
     }
 
@@ -1468,6 +1526,35 @@
             h("div", { class: "lumi-desc lumi-about-note" }, "Lumicord is not affiliated with Vencord, BetterDiscord or Discord. Thank you to everyone who builds these projects."));
     }
 
+    // Profiles: named snapshots of customization + which addons are on. "Minimal" and "Full" are built in.
+    const PROFILE_PRESETS = { Minimal: { custom: { animations: false, density: "compact", showThumbnails: false } }, Full: { custom: { animations: true, density: "comfortable", showThumbnails: true } } };
+    const snapshot = () => ({ custom: { ...custom() }, plugins: { ...settings.plugins }, themes: { ...settings.themes } });
+    function applyProfile(p) {
+        const all = addons.plugin.concat(addons.theme, corePlugins);
+        if (p.plugins || p.themes) for (const a of all) { const want = !!((a.type === "theme" ? p.themes : p.plugins) || {})[a.file]; if (!!a.enabled !== want) setEnabled(a, want); }
+        const cur = N.getSettings(); cur.custom = normalizeCustom(p.custom); N.setSettings(cur); applyCustom(); scheduleAutoCheck();
+    }
+    function profilesSection(row, rerender) {
+        const saved = () => { const v = N.getSettings().profiles; return v && typeof v === "object" && !Array.isArray(v) ? v : {}; };
+        const store = v => { const cur = N.getSettings(); cur.profiles = v; N.setSettings(cur); };
+        const box = h("div", null);
+        const draw = () => {
+            box.textContent = "";
+            const use = (name, p) => { applyProfile(p); toast(`Switched to ${name}`, { type: "success" }); rerender(); };
+            for (const [name, p] of Object.entries(PROFILE_PRESETS)) box.append(row(name, "Built-in. Changes appearance only.", h("button", { class: "lumi-btn", onClick: () => use(name, p) }, "Use")));
+            for (const [name, p] of Object.entries(saved())) box.append(row(name, "Saved profile: settings and enabled addons.", h("div", { class: "lumi-actions" },
+                h("button", { class: "lumi-btn", onClick: () => use(name, p) }, "Use"),
+                h("button", { class: "lumi-btn", title: "Overwrite with current setup", onClick: () => { store({ ...saved(), [name]: snapshot() }); toast(`${name} updated`); } }, "Save here"),
+                h("button", { class: "lumi-icon-btn lumi-del", title: "Delete", onClick: () => { const v = saved(); delete v[name]; store(v); draw(); } }, svg("trash", 18)))));
+            const input = h("input", { class: "lumi-input", placeholder: "Profile name", maxLength: 40 });
+            const add = () => { const n = input.value.trim(); if (!n) return; if (PROFILE_PRESETS[n]) return toast("That name is built in", { type: "warning" }); store({ ...saved(), [n]: snapshot() }); toast(`Saved ${n}`, { type: "success" }); draw(); };
+            input.addEventListener("keydown", e => { if (e.key === "Enter") add(); });
+            box.append(row("Save current setup", "Stores your settings and which plugins and themes are on.", h("div", { class: "lumi-actions" }, input, h("button", { class: "lumi-btn lumi-primary", onClick: add }, "Save"))));
+        };
+        draw();
+        return box;
+    }
+
     function settingsPage() {
         const c = customValues();
         const row = (name, desc, control) => h("div", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, name), desc && h("div", { class: "lumi-desc" }, desc)), control);
@@ -1521,6 +1608,7 @@
                 row("Animations", "Turn off for a calmer, faster feel.", sw(c.animations, v => setCustom({ animations: v }))),
                 row("Show addon source labels", null, sw(c.showSources, v => setCustom({ showSources: v }))),
                 row("Show Marketplace thumbnails", null, sw(c.showThumbnails, v => setCustom({ showThumbnails: v })))),
+            section("Profiles", profilesSection(row, () => page.replaceWith(settingsPage()))),
             section("Custom CSS", h("div", { class: "lumi-desc" }, "Small tweaks without making a theme. Saved automatically."), css),
             section("Behavior",
                 row("Default addon sort", null, select(c.addonSort, [["name", "Name"], ["enabled", "Enabled first"]], "addonSort")),
@@ -1546,6 +1634,7 @@
 
     const PAGES = {
         plugins: { label: "Plugins", icon: "plugins", render: () => tabbedPage("plugin") },
+        core: { label: "Lumicord Plugins", icon: "plugins", render: corePage },
         themes: { label: "Themes", icon: "themes", render: () => tabbedPage("theme") },
         marketplace: { label: "Marketplace", icon: "market", render: () => marketplace() },
         updater: { label: "Updater", icon: "update", render: updaterPage },
