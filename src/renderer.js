@@ -1129,20 +1129,35 @@
         const updateBtn = h("button", { class: "lumi-btn lumi-primary", style: { display: "none" } }, "Update");
         const checkBtn = h("button", { class: "lumi-btn" }, "Check for updates");
         updateBtn.addEventListener("click", () => runUpdate(updateBtn));
-        const check = async () => {
+        const check = async manual => {
             checkBtn.disabled = true; status.textContent = "Checking for updates…"; notes.textContent = ""; updateBtn.style.display = "none";
+            // Manual check: a "please wait" dialog that stays at least 2 seconds, so the scan is visible.
+            const closeWait = manual ? modal("Checking for updates", h("div", { class: "lumi-checking" }, h("span", { class: "lumi-spinner" }), "Checking for updates, please wait…"), []) : null;
+            const minWait = new Promise(r => setTimeout(r, manual ? 2000 : 0));
             try {
-                const i = await N.checkUpdate();
+                const i = await Promise.all([N.checkUpdate(), minWait]).then(x => x[0]);
+                if (closeWait) closeWait();
+                if (manual) {
+                    if (i.available) modal(`Update available: v${i.latest}`, h("div", null,
+                        h("div", { class: "lumi-desc" }, `You have v${i.current}. Update now to get the latest version.`),
+                        i.notes && h("div", { class: "lumi-notes" }, i.notes)),
+                        [{ label: "Later" }, { label: "Update now", primary: true, onClick: () => runUpdate(updateBtn) }]);
+                    else modal("You're up to date", i.note || `Lumicord v${i.current} is the latest version.`, [{ label: "Okay", primary: true }]);
+                }
                 if (i.available) {
                     status.textContent = `Version ${i.latest} is available. You have ${i.current}.`;
                     notes.textContent = i.notes || "No release notes.";
                     updateBtn.style.display = "";
                 } else status.textContent = i.note || `You're up to date (v${i.current}).`;
-            } catch (e) { status.textContent = "Could not check for updates: " + e.message; }
+            } catch (e) {
+                await minWait; if (closeWait) closeWait();
+                status.textContent = "Could not check for updates: " + e.message;
+                if (manual) modal("Could not check for updates", e.message, [{ label: "Okay", primary: true }]);
+            }
             checkBtn.disabled = false;
         };
-        checkBtn.addEventListener("click", check);
-        check();
+        checkBtn.addEventListener("click", () => check(true));
+        check(false);
         return h("div", null,
             h("div", { class: "lumi-card" },
                 h("div", { class: "lumi-card-top" },
@@ -1943,6 +1958,8 @@
     });
 
     addStyle("lumicord-market", `
+      .lumi-checking{display:flex;align-items:center;gap:12px;font-size:15px;padding:6px 0}
+      .lumi-spinner{width:22px;height:22px;border-radius:50%;border:3px solid #ffffff26;border-top-color:var(--lumi-accent);animation:lumi-spin .8s linear infinite;flex-shrink:0}
       .lumi-mgrid{display:grid;grid-template-columns:repeat(auto-fill,minmax(210px,1fr));gap:12px}
       .lumi-mcard{display:flex;flex-direction:column;min-height:250px;border-radius:8px;overflow:hidden;background:var(--background-secondary,#2b2d31);
         border:1px solid var(--border-subtle,#ffffff12);transition:transform .18s,border-color .18s,box-shadow .18s}
