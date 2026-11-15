@@ -160,6 +160,33 @@ const { findResources, install, uninstall } = require("./install");
     console.log("store decode test passed");
 }
 
+// Marketplace date sorts are newest-first, including unknown dates after known ones.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    const marketplaceCompare = ");
+    const end = renderer.indexOf("    const relativeDate = ", start);
+    const marketplaceCompare = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return marketplaceCompare; })()`);
+    const items = [{ name: "Old", created: 10, updated: 30 }, { name: "New", created: 30, updated: 10 }, { name: "Unknown", created: 0, updated: 0 }];
+    assert.deepStrictEqual(items.slice().sort(marketplaceCompare("created")).map(x => x.name), ["New", "Old", "Unknown"]);
+    assert.deepStrictEqual(items.slice().sort(marketplaceCompare("updated")).map(x => x.name), ["Old", "New", "Unknown"]);
+    console.log("marketplace date sort test passed");
+}
+
+// The changelog records a fresh install silently, then shows exactly once per changed version.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    const shouldShowChangelog = ");
+    const end = renderer.indexOf("    const showChangelog = ", start);
+    const shouldShowChangelog = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return shouldShowChangelog; })()`);
+    const fresh = {};
+    assert.strictEqual(shouldShowChangelog(fresh, "1.0.0"), false);
+    assert.strictEqual(fresh.lastSeenVersion, "1.0.0");
+    assert.strictEqual(shouldShowChangelog(fresh, "1.0.1"), true);
+    assert.strictEqual(fresh.lastSeenVersion, "1.0.1");
+    assert.strictEqual(shouldShowChangelog(fresh, "1.0.1"), false);
+    console.log("changelog once test passed");
+}
+
 // Webpack search follows BetterDiscord: searchExports, `in` key checks (Proxy modules), source search, A/default keys.
 {
     const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");

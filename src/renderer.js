@@ -1198,12 +1198,20 @@
     }
 
     const storeCache = {};
+    const marketplaceCompare = sort => (x, y) => sort === "name" ? x.name.localeCompare(y.name) : (y[sort] || 0) - (x[sort] || 0);
+    const relativeDate = time => {
+        const n = Math.max(0, Date.now() - time), units = [[86400000, "day"], [3600000, "hour"], [60000, "minute"]];
+        for (const [ms, name] of units) if (n >= ms) { const count = Math.floor(n / ms); return count + " " + name + (count === 1 ? "" : "s") + " ago"; }
+        return "just now";
+    };
     // fixedType: show only plugins or only themes (used inside the Plugins / Themes pages).
     function marketplace(fixedType) {
         let type = fixedType || "plugin";
         const tabs = h("div", { class: "lumi-tabs" });
         const q = h("input", { class: "lumi-input lumi-search", placeholder: "Search the marketplace…" });
-        const sort = dropdown([["downloads", "Most downloaded"], ["likes", "Most liked"], ["name", "Name"]], "downloads");
+        let savedSort = "downloads"; try { savedSort = localStorage.getItem("lumicord-market-sort") || savedSort; } catch { }
+        if (!["downloads", "likes", "created", "updated", "name"].includes(savedSort)) savedSort = "downloads";
+        const sort = dropdown([["downloads", "Most downloaded"], ["likes", "Most liked"], ["created", "Newest"], ["updated", "Recently updated"], ["name", "Name"]], savedSort);
         sort.classList.add("lumi-sort");
         const grid = h("div", { class: "lumi-mgrid" }); // compact card grid, like the BetterDiscord store
         const draw = () => {
@@ -1213,7 +1221,7 @@
             if (data instanceof Error) { grid.append(h("div", { class: "lumi-empty" }, "Could not load the marketplace: " + data.message)); return; }
             const s = q.value.toLowerCase();
             const items = data.filter(a => (a.name + " " + a.description + " " + a.author + " " + a.tags.join(" ")).toLowerCase().includes(s))
-                .sort((x, y) => sort.value === "name" ? x.name.localeCompare(y.name) : y[sort.value] - x[sort.value]).slice(0, 120);
+                .sort(marketplaceCompare(sort.value)).slice(0, 120);
             let n = 0;
             for (const a of items) {
                 const installed = addons[type].some(x => x.name === a.name);
@@ -1255,7 +1263,7 @@
                         h("div", { class: "lumi-mdesc" }, a.description || "No description.")),
                     h("div", { class: "lumi-mfoot" },
                         h("span", { class: "lumi-mstats" }, svg("update", 13), " " + a.downloads.toLocaleString(), h("span", { class: "lumi-mheart" }, " ♥ " + a.likes.toLocaleString())),
-                        btn)));
+                        a.updated && h("span", { class: "lumi-mupdated" }, "Updated " + relativeDate(a.updated)), btn)));
             }
             if (!items.length) grid.append(h("div", { class: "lumi-empty" }, "Nothing matches your search."));
         };
@@ -1270,7 +1278,7 @@
         };
         tabs.append(tabBtn("plugin", "Plugins"), tabBtn("theme", "Themes"));
         q.placeholder = fixedType === "theme" ? "Search themes…" : fixedType === "plugin" ? "Search plugins…" : "Search the marketplace…";
-        q.addEventListener("input", draw); sort.addEventListener("change", draw);
+        q.addEventListener("input", draw); sort.addEventListener("change", () => { try { localStorage.setItem("lumicord-market-sort", sort.value); } catch { } draw(); });
         load();
         return h("div", null,
             h("div", { class: "lumi-note" }, type === "theme" && fixedType
@@ -1407,6 +1415,21 @@
     }
 
     // Automatic checks use the selected interval; each new version is offered once per session.
+    const shouldShowChangelog = (s, version) => {
+        if (!s.lastSeenVersion) { s.lastSeenVersion = version; return false; }
+        if (s.lastSeenVersion === version) return false;
+        s.lastSeenVersion = version; return true;
+    };
+    const showChangelog = () => {
+        const s = N.getSettings(), version = N.version();
+        if (!shouldShowChangelog(s, version)) return N.setSettings(s);
+        N.setSettings(s); // record before fetching so this release is shown at most once
+        N.releaseNotes(version).then(r => {
+            const content = h("div", null, r.notes && h("div", { class: "lumi-notes" }, r.notes), h("a", { href: r.url, target: "_blank", rel: "noreferrer" }, "See the release page"));
+            modal("What's new in Lumicord v" + version, content, [{ label: "Okay", primary: true }]);
+        });
+    };
+    showChangelog();
     let offeredVersion = null;
     const autoCheck = () => N.checkUpdate().then(i => {
         if (!i.available || i.latest === offeredVersion) return;
@@ -2206,7 +2229,7 @@
       .lumi-mdesc{font-size:13px;line-height:1.35;color:var(--text-normal,#dbdee1);margin-top:6px;display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden}
       .lumi-mfoot{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 12px}
       .lumi-mstats{display:flex;align-items:center;gap:3px;font-size:12px;color:var(--text-muted,#949ba4);white-space:nowrap;overflow:hidden}
-      .lumi-mheart{margin-left:6px}
+      .lumi-mheart{margin-left:6px}.lumi-mupdated{font-size:11px;color:var(--text-muted,#949ba4);margin-left:auto;white-space:nowrap}
       .lumi-mfoot .lumi-btn{padding:5px 12px;font-size:13px;flex-shrink:0}`);
 
     window.Lumicord = { addons, settings, BdApi, Webpack, Patcher, open: openStandalone, setEnabled, loadPlugin, loadTheme };
