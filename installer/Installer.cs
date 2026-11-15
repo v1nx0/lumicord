@@ -764,6 +764,13 @@ class Wizard : Form {
         var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
         body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
         string[] text = { "BetterDiscord plugins & themes", "Built-in Marketplace", "Signed automatic updates" }; string[] icon = { "puzzle", "store", "shield" };
+        var found = Installed();
+        if (found.Count > 0) {
+            var fix = new FlatButton("Repair in one click", BtnStyle.Outline) { Location = new Point(32, 360), Size = new Size(180, 34), BackColor = Theme.Bg };
+            fix.Click += (o, e) => { action = "repair"; quickRepair = found; Show(4); };
+            body.Controls.Add(fix);
+            body.Controls.Add(new Label { Text = "Broken after a Discord update? Repairs " + string.Join(", ", found.Select(f => f[1])) + ".", Font = Theme.F(9), ForeColor = Theme.Muted, Location = new Point(32, 402), AutoSize = true });
+        }
         for (int i=0;i<3;i++) { int y=254+i*34; var row = new Canvas { Location=new Point(32,y), Size=new Size(290,28), BackColor=Theme.Bg }; int n=i; row.Paint += (o,e) => { Icons.Draw(e.Graphics,icon[n],new RectangleF(2,5,18,18),Theme.Accent); Theme.Draw(e.Graphics,text[n],Theme.F(10.5f),new RectangleF(32,1,310,26),Theme.Text,StringAlignment.Near,StringAlignment.Center); }; body.Controls.Add(row); }
     }
 
@@ -940,12 +947,15 @@ class Wizard : Form {
         next.Enabled = false; next.Text = "Close";
         int lines = 0;
         Action<string> say = m => BeginInvoke((Action)(() => { log.AppendText(m + "\r\n"); lines++; }));
-        string a = action, ch = channel, custom; bool sep = separateProfile;
-        customDirs.TryGetValue(ch, out custom);
+        string a = action, ch = channel, custom = null; bool sep = separateProfile;
+        if (ch != null) customDirs.TryGetValue(ch, out custom);
+        var targets = quickRepair; quickRepair = null;
         installing = true;
         Task.Run(() => {
             bool ok = true;
-            try { Work(a, ch, custom, sep, say); say(""); say(a == "uninstall" ? "Lumicord was removed." : "Done. Open Discord and find Lumicord in User Settings."); }
+            try {
+                if (targets != null) foreach (var t in targets) Work("repair", t[0], null, t[2] == "1", say);
+                else Work(a, ch, custom, sep, say); say(""); say(a == "uninstall" ? "Lumicord was removed." : "Done. Open Discord and find Lumicord in User Settings."); }
             catch (Exception ex) { ok = false; say(""); say("Failed: " + ex.Message); }
             BeginInvoke((Action)(() => {
                 installing = false;
@@ -961,7 +971,7 @@ class Wizard : Form {
     // Developer-only visual regression capture. It never calls Work or opens a folder dialog.
     public void SaveShots(string folder) {
         Directory.CreateDirectory(folder);
-        Location = new Point(-2000, -2000); Opacity = 1; Show(); Application.DoEvents();
+        Location = new Point(-2000, -2000); Opacity = 1; Show(); Application.DoEvents(); Settle();
         SaveShot(folder, "00-welcome.png");
         Show(1); Settle(); SaveShot(folder, "01-license.png");
         foreach (Check c in body.Controls.OfType<Check>()) c.Toggle(); Settle(); SaveShot(folder, "01b-license-checked.png");
@@ -1033,6 +1043,23 @@ class Wizard : Form {
     }
 
     // dir = a Discord install folder (contains app-x.y.z). Returns the newest version's resources folder.
+    // One-click repair: Discord builds that had Lumicord in ANY app-* version (a Discord update makes a new app-*
+    // folder without our loader). Returns { folder, display name, "1" if it used a separate profile }.
+    // shortcut: custom-folder installs aren't detected; they still repair through the normal wizard.
+    List<string[]> quickRepair;
+    static List<string[]> Installed() {
+        var list = new List<string[]>();
+        for (int i = 0; i < Builds.GetLength(0); i++) {
+            var dir = Path.Combine(Local, Builds[i, 0]);
+            if (!Directory.Exists(dir)) continue;
+            try {
+                var loaders = Directory.GetDirectories(dir, "app-*").Select(d => Path.Combine(d, "resources", "app", "index.js")).Where(File.Exists).Select(File.ReadAllText).Where(t => t.Contains("patcher.js")).ToList();
+                if (loaders.Count > 0) list.Add(new[] { Builds[i, 0], Builds[i, 1], loaders.Any(t => t.Contains("LUMICORD_PROFILE")) ? "1" : "0" });
+            } catch { }
+        }
+        return list;
+    }
+
     static string FindResourcesIn(string dir) {
         if (string.IsNullOrEmpty(dir) || !Directory.Exists(dir)) return null;
         var app = Directory.GetDirectories(dir, "app-*")
