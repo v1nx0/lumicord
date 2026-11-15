@@ -133,6 +133,22 @@ const { findResources, install, uninstall } = require("./install");
     console.log("context menu test passed");
 }
 
+// Commands are available on both the static and per-plugin BdApi, and cleanup is caller-scoped.
+{
+    const renderer = fs.readFileSync(path.join(__dirname, "src", "renderer.js"), "utf8");
+    const start = renderer.indexOf("    const commandCallers = new Map();");
+    const end = renderer.indexOf("    function BdApi(name)", start);
+    const {Commands, boundCommands} = vm.runInNewContext(`(() => {${renderer.slice(start, end)}return {Commands, boundCommands}; })()`, { Map, BdApi: { Hooks: {} }, Data: {} });
+    const scoped = boundCommands("Plugin");
+    const command = { id: "hello", name: "hello", execute: () => {} };
+    const remove = scoped.register(command);
+    assert.strictEqual(Commands.getCommandsByCaller("Plugin")[0], command);
+    remove();
+    assert.strictEqual(Commands.getCommandsByCaller("Plugin").length, 0);
+    assert.throws(() => Commands.register("BetterDiscord", command));
+    console.log("commands API test passed");
+}
+
 // SvelteKit encodes optional catalog fields as -1; the marketplace decoder must restore undefined, not -1.
 {
     const preload = fs.readFileSync(path.join(__dirname, "src", "preload.js"), "utf8");
