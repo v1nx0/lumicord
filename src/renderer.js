@@ -491,9 +491,8 @@
                     return row(s, sw);
                 }
                 case "dropdown": case "select": {
-                    const sel = h("select", { class: "lumi-input", onChange: e => set((s.options || [])[e.target.selectedIndex].value) },
-                        (s.options || []).map(o => h("option", { selected: o.value === s.value }, o.label)));
-                    return row(s, sel);
+                    const opts = s.options || [];
+                    return row(s, dropdown(opts.map((o, i) => [i, o.label]), Math.max(0, opts.findIndex(o => o.value === s.value)), i => set(opts[i].value)));
                 }
                 case "radio": {
                     const name = "lumi-r-" + Math.random().toString(36).slice(2);
@@ -502,15 +501,15 @@
                 }
                 case "slider": {
                     const out = h("span", { class: "lumi-sp-val" }, String(s.value));
-                    const input = h("input", { type: "range", class: "lumi-sp-slider", min: s.min != null ? s.min : 0, max: s.max != null ? s.max : 100,
+                    const input = fillRange(h("input", { type: "range", class: "lumi-sp-slider", min: s.min != null ? s.min : 0, max: s.max != null ? s.max : 100,
                         step: s.step != null ? s.step : ((s.max - s.min) <= 10 ? 0.1 : 1), value: s.value,
-                        onInput: e => { out.textContent = e.target.value; }, onChange: e => set(Number(e.target.value)) });
+                        onInput: e => { out.textContent = e.target.value; }, onChange: e => set(Number(e.target.value)) }));
                     return row(s, h("div", { class: "lumi-sp-slide" }, input, out), true);
                 }
                 case "number":
                     return row(s, h("input", { class: "lumi-input", type: "number", value: s.value, min: s.min, max: s.max, onChange: e => set(Number(e.target.value)) }));
                 case "color":
-                    return row(s, h("input", { type: "color", value: s.value || "#000000", onChange: e => set(e.target.value) }));
+                    return row(s, colorPicker(/^#[0-9a-f]{6}$/i.test(s.value) ? s.value : "#000000", v => set(v)));
                 default: // text and anything unknown
                     return row(s, h("input", { class: "lumi-input", type: "text", value: s.value == null ? "" : s.value, placeholder: s.placeholder || "", onChange: e => set(e.target.value) }));
             }
@@ -885,6 +884,38 @@
         t.addEventListener("click", () => { const next = !t.classList.contains("on"); t.classList.toggle("on", next); t.setAttribute("aria-checked", String(next)); onChange(next); });
         return t;
     };
+    // Our own dropdown: the native <select> list is drawn by Windows and can't be styled. btn.value and a "change"
+    // event mimic a <select>, so code written for one keeps working.
+    function dropdown(options, value, onChange) {
+        const label = v => (options.find(o => String(o[0]) === String(v)) || options[0] || [, ""])[1];
+        const btn = h("button", { class: "lumi-input lumi-dd", type: "button", ariaHasPopup: "listbox" }, label(value));
+        btn.value = String(value);
+        const choose = v => { value = v; btn.value = String(v); btn.textContent = label(v); if (onChange) onChange(v); btn.dispatchEvent(new Event("change")); };
+        btn.addEventListener("click", e => {
+            e.preventDefault(); e.stopPropagation();
+            const open = document.querySelector(".lumi-dd-menu"); if (open) { open.close(); if (open.owner === btn) return; }
+            const items = options.map(([v, text]) => h("button", { class: "lumi-dd-item" + (String(v) === String(value) ? " on" : ""), type: "button", role: "option",
+                onClick: () => { menu.close(); choose(v); } }, text));
+            const menu = h("div", { class: "lumi-dd-menu", role: "listbox" }, items);
+            menu.owner = btn;
+            const r = btn.getBoundingClientRect(), up = r.bottom + options.length * 36 + 16 > innerHeight;
+            Object.assign(menu.style, { minWidth: r.width + "px", left: Math.max(8, r.right - Math.max(r.width, 150)) + "px", [up ? "bottom" : "top"]: (up ? innerHeight - r.top + 6 : r.bottom + 6) + "px" });
+            const outside = ev => { if (!menu.contains(ev.target) && ev.target !== btn) menu.close(); };
+            const keys = ev => {
+                const i = items.indexOf(document.activeElement);
+                if (ev.key === "Escape") { ev.stopImmediatePropagation(); menu.close(); btn.focus(); }
+                else if (ev.key === "ArrowDown" || ev.key === "ArrowUp") { ev.preventDefault(); items[(i + (ev.key === "ArrowDown" ? 1 : -1) + items.length) % items.length].focus(); }
+            };
+            menu.close = () => { menu.remove(); document.removeEventListener("pointerdown", outside, true); document.removeEventListener("keydown", keys, true); };
+            document.addEventListener("pointerdown", outside, true); document.addEventListener("keydown", keys, true);
+            document.body.append(menu);
+            (items.find(x => x.classList.contains("on")) || items[0]).focus();
+        });
+        return btn;
+    }
+    // Range sliders: fill the track up to the knob.
+    const fillRange = el => { const f = () => el.style.setProperty("--fill", ((el.value - el.min) / ((el.max - el.min) || 1) * 100) + "%"); el.addEventListener("input", f); f(); return el; };
+
     // Where an addon comes from, as plain gray text (no colored badges).
     const badge = kind => custom().showSources !== false && h("span", { class: "lumi-source" }, { bd: "BetterDiscord", vencord: "Vencord", lumicord: "Lumicord" }[kind] + " addon");
 
@@ -902,8 +933,8 @@
                 let input;
                 if (d.type === OptionType.BOOLEAN) input = toggle(!!cur, v => { i.settings.store[k] = v; input.classList.toggle("on", v); });
                 else if (d.type === OptionType.SELECT) {
-                    input = h("select", { class: "lumi-input", onChange: e => { i.settings.store[k] = d.options[e.target.selectedIndex].value; } },
-                        (d.options || []).map(o => h("option", { selected: o.value === cur || (cur === undefined && o.default) }, o.label)));
+                    const opts = d.options || [], at = opts.findIndex(o => o.value === cur || (cur === undefined && o.default));
+                    input = dropdown(opts.map((o, n) => [n, o.label]), Math.max(0, at), n => { i.settings.store[k] = opts[n].value; });
                 } else input = h("input", { class: "lumi-input", value: cur == null ? "" : cur, type: d.type === OptionType.NUMBER || d.type === OptionType.SLIDER ? "number" : "text", onChange: e => { i.settings.store[k] = d.type === OptionType.STRING ? e.target.value : Number(e.target.value); } });
                 box.append(h("label", { class: "lumi-row" }, h("div", null, h("div", { class: "lumi-name" }, k), h("div", { class: "lumi-desc" }, d.description || "")), input));
             }
@@ -971,7 +1002,8 @@
         let type = fixedType || "plugin";
         const tabs = h("div", { class: "lumi-tabs" });
         const q = h("input", { class: "lumi-input lumi-search", placeholder: "Search the marketplace…" });
-        const sort = h("select", { class: "lumi-input lumi-sort" }, h("option", { value: "downloads" }, "Most downloaded"), h("option", { value: "likes" }, "Most liked"), h("option", { value: "name" }, "Name"));
+        const sort = dropdown([["downloads", "Most downloaded"], ["likes", "Most liked"], ["name", "Name"]], "downloads");
+        sort.classList.add("lumi-sort");
         const grid = h("div", { class: "lumi-list" }); // one column, like the installed list
         const draw = () => {
             grid.textContent = "";
@@ -1262,25 +1294,7 @@
         const sw = (on, fn) => toggle(on, fn);
         let nth = 0;
         const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card", style: { animationDelay: (nth++ * 45) + "ms" } }, h("div", { class: "lumi-set-title" }, title), ...rows);
-        // Our own dropdown: the native <select> list is drawn by Windows and can't be styled.
-        const select = (value, options, key) => {
-            const label = v => (options.find(o => String(o[0]) === String(v)) || options[0])[1];
-            const btn = h("button", { class: "lumi-input lumi-dd", ariaHasPopup: "listbox" }, label(value));
-            btn.addEventListener("click", e => {
-                e.stopPropagation();
-                const open = document.querySelector(".lumi-dd-menu"); if (open) { open.remove(); if (open.owner === btn) return; }
-                const menu = h("div", { class: "lumi-dd-menu", role: "listbox" }, options.map(([v, text]) => h("button", {
-                    class: "lumi-dd-item" + (String(v) === String(value) ? " on" : ""), role: "option",
-                    onClick: () => { value = v; btn.textContent = text; menu.remove(); setCustom({ [key]: v }); } }, text)));
-                menu.owner = btn;
-                const r = btn.getBoundingClientRect(), up = r.bottom + options.length * 36 + 16 > innerHeight;
-                Object.assign(menu.style, { minWidth: r.width + "px", left: r.right - Math.max(r.width, 150) + "px", [up ? "bottom" : "top"]: (up ? innerHeight - r.top + 6 : r.bottom + 6) + "px" });
-                document.body.append(menu);
-                const close = ev => { if (!menu.contains(ev.target) && ev.target !== btn) { menu.remove(); document.removeEventListener("pointerdown", close, true); } };
-                document.addEventListener("pointerdown", close, true);
-            });
-            return btn;
-        };
+        const select = (value, options, key) => dropdown(options, value, v => setCustom({ [key]: v }));
 
         const mark = a => [...swatches.children].forEach(b => b.classList.toggle("on", b.title === a));
         const custom1 = colorPicker(c.accent, v => { mark(v); setCustom({ accent: v }); });
@@ -1292,8 +1306,7 @@
         const radius = h("input", { type: "range", class: "lumi-sp-slider", min: 0, max: 16, value: c.radius, onInput: e => { radiusVal.textContent = e.target.value + "px"; setCustom({ radius: Number(e.target.value) }); } });
         const scaleVal = h("span", { class: "lumi-sp-val" }, c.fontScale + "%");
         const scale = h("input", { type: "range", class: "lumi-sp-slider", min: 80, max: 125, value: c.fontScale, onInput: e => { scaleVal.textContent = e.target.value + "%"; setCustom({ fontScale: Number(e.target.value) }); } });
-        const fill = el => { const f = () => el.style.setProperty("--fill", ((el.value - el.min) / (el.max - el.min) * 100) + "%"); el.addEventListener("input", f); f(); return el; };
-        fill(radius); fill(scale);
+        fillRange(radius); fillRange(scale);
 
         const css = h("textarea", { class: "lumi-input lumi-css", spellcheck: false, placeholder: "/* Your CSS, applied live on top of Discord and themes */", value: c.customCSS,
             onInput: e => setCustom({ customCSS: e.target.value }) });
@@ -1838,6 +1851,21 @@
       .lumi-color{position:absolute;inset:0;opacity:0;cursor:pointer;width:100%;height:100%}
       .lumi-set-slider{display:flex;gap:12px;align-items:center;width:240px;flex-shrink:0}
       .lumi-set-slider .lumi-sp-val{min-width:44px;text-align:right;font-variant-numeric:tabular-nums;font-weight:600;color:var(--header-primary,#fff)}
+      .lumi-tip{position:fixed;z-index:10001;pointer-events:none;padding:6px 10px;border-radius:6px;background:var(--background-floating,#111214);
+        color:var(--text-normal,#dbdee1);font-size:13px;font-weight:500;box-shadow:0 6px 18px #0008;border:1px solid var(--border-subtle,#ffffff14);animation:lumi-pop .12s ease-out both}
+      .lumi-embedded ::-webkit-scrollbar,.lumi-overlay ::-webkit-scrollbar,.lumi-modal ::-webkit-scrollbar,.lumi-dd-menu::-webkit-scrollbar{width:8px;height:8px}
+      .lumi-embedded ::-webkit-scrollbar-thumb,.lumi-overlay ::-webkit-scrollbar-thumb,.lumi-modal ::-webkit-scrollbar-thumb{background:#ffffff26;border-radius:4px}
+      .lumi-embedded ::-webkit-scrollbar-track,.lumi-overlay ::-webkit-scrollbar-track,.lumi-modal ::-webkit-scrollbar-track{background:transparent}
+      .lumi-dd-menu{max-height:min(320px,60vh);overflow:auto}
+      .lumi-dd-item:focus-visible{outline:none;background:#ffffff14;color:#fff}
+      input.lumi-input[type=number]::-webkit-inner-spin-button,input.lumi-input[type=number]::-webkit-outer-spin-button{-webkit-appearance:none;margin:0}
+      .lumi-sp-radio input[type=radio]{-webkit-appearance:none;appearance:none;width:18px;height:18px;margin:0 6px 0 0;vertical-align:-4px;border-radius:50%;
+        border:2px solid var(--interactive-normal,#b5bac1);cursor:pointer;transition:border-color .15s,box-shadow .15s}
+      .lumi-sp-radio input[type=radio]:checked{border-color:var(--lumi-accent);box-shadow:inset 0 0 0 3px var(--background-secondary,#2b2d31),inset 0 0 0 9px var(--lumi-accent)}
+      .lumi-sp-slider{-webkit-appearance:none;appearance:none;height:6px;border-radius:3px;cursor:pointer;
+        background:linear-gradient(90deg,var(--lumi-accent) var(--fill,50%),#ffffff1f var(--fill,50%))}
+      .lumi-sp-slider::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;box-shadow:0 2px 6px #0006;transition:transform .15s}
+      .lumi-sp-slider:hover::-webkit-slider-thumb{transform:scale(1.15)}
       .lumi-set-card input[type=range]{-webkit-appearance:none;appearance:none;flex:1;height:6px;border-radius:3px;cursor:pointer;
         background:linear-gradient(90deg,var(--lumi-accent) var(--fill,50%),#ffffff1f var(--fill,50%))}
       .lumi-set-card input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;
@@ -1870,6 +1898,20 @@
       .lumi-cp-presets{display:flex;gap:4px;flex-wrap:wrap}
       .lumi-cp-preset{width:16px;height:16px;border-radius:50%;border:0;padding:0;cursor:pointer;transition:transform .15s}.lumi-cp-preset:hover{transform:scale(1.2)}`);
     applyCustom();
+
+    // Native title tooltips are drawn by Windows; show our own for Lumicord's UI instead.
+    let tip;
+    document.addEventListener("mouseover", e => {
+        const el = e.target.closest && e.target.closest(".lumi-embedded [title],.lumi-overlay [title],.lumi-modal [title],.lumi-uc [title],[data-lumi-tip]");
+        if (!el) return;
+        if (el.title) { el.dataset.lumiTip = el.title; el.removeAttribute("title"); if (!el.ariaLabel) el.ariaLabel = el.dataset.lumiTip; }
+        if (tip) tip.remove();
+        tip = h("div", { class: "lumi-tip" }, el.dataset.lumiTip);
+        document.body.append(tip);
+        const r = el.getBoundingClientRect(), w = tip.offsetWidth;
+        Object.assign(tip.style, { left: Math.max(6, Math.min(innerWidth - w - 6, r.left + r.width / 2 - w / 2)) + "px", top: (r.top - tip.offsetHeight - 8 < 0 ? r.bottom + 8 : r.top - tip.offsetHeight - 8) + "px" });
+        el.addEventListener("mouseleave", () => { if (tip) { tip.remove(); tip = null; } }, { once: true });
+    });
 
     window.Lumicord = { addons, settings, BdApi, Webpack, Patcher, open: openStandalone, setEnabled, loadPlugin, loadTheme };
     log("loaded", addons.plugin.length, "plugins,", addons.theme.length, "themes");
