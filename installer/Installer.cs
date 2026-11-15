@@ -18,14 +18,14 @@ static class Theme {
     public const int S4 = 4, S8 = 8, S12 = 12, S16 = 16, S24 = 24;
     public const int Radius = 8, SmallRadius = 6;
     public const float TypeCaption = 9.5f, TypeBody = 10.5f, TypeTitle = 16f;
-    public static readonly Color Bg = Color.FromArgb(42, 13, 33);          // dark, tinted pink
-    public static readonly Color Surface = Color.FromArgb(58, 18, 45);
-    public static readonly Color SurfaceHover = Color.FromArgb(74, 24, 58);
-    public static readonly Color Border = Color.FromArgb(108, 42, 86);
-    public static readonly Color Accent = Color.FromArgb(236, 72, 153); // pink
-    public static readonly Color Text = Color.FromArgb(240, 241, 245);
-    public static readonly Color Muted = Color.FromArgb(214, 166, 196);
-    public static readonly Color Danger = Color.FromArgb(218, 55, 60);
+    public static readonly Color Bg = Color.FromArgb(219, 39, 119); // bright pink theme (#DB2777), deep rose accent (#831843) for contrast
+    public static readonly Color Surface = Color.FromArgb(230, 60, 140);
+    public static readonly Color SurfaceHover = Color.FromArgb(240, 90, 160);
+    public static readonly Color Border = Color.FromArgb(249, 150, 200);
+    public static readonly Color Accent = Color.FromArgb(131, 24, 67);
+    public static readonly Color Text = Color.FromArgb(255, 255, 255);
+    public static readonly Color Muted = Color.FromArgb(253, 222, 238);
+    public static readonly Color Danger = Color.FromArgb(127, 29, 29);
 
     static readonly Dictionary<string, Font> fonts = new Dictionary<string, Font>();
     public static Font F(float size, FontStyle s = FontStyle.Regular) {
