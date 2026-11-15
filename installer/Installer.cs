@@ -36,7 +36,7 @@ static class Theme {
     // Grayscale anti-aliased text (ClearType fringes on custom-painted backgrounds).
     public static void Draw(Graphics g, string text, Font font, RectangleF r, Color c,
                             StringAlignment h = StringAlignment.Near, StringAlignment v = StringAlignment.Near, bool wrap = false) {
-        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAlias;
+        g.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit; // grid-fit: sharp glyph edges, no ClearType fringes
         using (var b = new SolidBrush(c))
         using (var sf = new StringFormat(wrap ? 0 : StringFormatFlags.NoWrap) { Alignment = h, LineAlignment = v, Trimming = StringTrimming.EllipsisPath })
             g.DrawString(text, font, b, r, sf);
@@ -231,7 +231,7 @@ class IconButton : AnimControl {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
         if (Round) using (var b = new SolidBrush(Theme.Mix(Theme.Surface, HoverColor, hover))) g.FillEllipse(b, 0.5f, 0.5f, Width - 1, Height - 1);
         else if (hover > 0.01f) using (var b = new SolidBrush(Theme.Alpha(HoverColor, (int)(255 * hover)))) g.FillRectangle(b, ClientRectangle);
-        float s = Width * 0.44f;
+        float s = Width * 0.5f;
         Icons.Draw(g, Icon, new RectangleF((Width - s) / 2, (Height - s) / 2, s, s), Theme.Mix(Theme.Muted, Theme.Text, hover));
         if (Focused && ShowFocusCues) using (var pen = new Pen(Theme.Accent, 2)) g.DrawEllipse(pen, 1, 1, Width - 3, Height - 3);
     }
@@ -484,6 +484,15 @@ class Wizard : Form {
     float slideStart = -1; int slideDir = 1;
     float progress; // title-bar progress line (0..1)
     Bitmap logo;               // the app icon, drawn small in the title bar
+    Bitmap logoBig;            // 512px source (bundled logo.png) for sharp large renders
+    // Downscale once with high-quality filtering; drawing a big bitmap small every frame (or a small one big) blurs.
+    static Bitmap Scaled(Image src, int size) {
+        var b = new Bitmap(size, size);
+        using (var g = Graphics.FromImage(b)) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.PixelOffsetMode = PixelOffsetMode.HighQuality; g.SmoothingMode = SmoothingMode.AntiAlias; g.DrawImage(src, 0, 0, size, size); }
+        return b;
+    }
+    readonly Dictionary<int, Bitmap> logoSizes = new Dictionary<int, Bitmap>();
+    Bitmap LogoAt(int size) { Bitmap b; if (!logoSizes.TryGetValue(size, out b)) logoSizes[size] = b = Scaled((Image)logoBig ?? logo, size); return b; }
     bool installing;           // closing is blocked while files are being changed
     bool separateProfile;      // "don't share": this Discord version gets its own plugins/themes/settings
     readonly FlatButton back = new FlatButton("Back", BtnStyle.Outline);
@@ -501,11 +510,12 @@ class Wizard : Form {
         ClientSize = new Size(W, H); BackColor = Theme.Bg; ForeColor = Theme.Text; DoubleBuffered = true; Opacity = 0;
         // our own exe (not Application.ExecutablePath, which is the host process when the form is hosted elsewhere)
         try { Icon = Icon.ExtractAssociatedIcon(Assembly.GetExecutingAssembly().Location); logo = new Icon(Icon, 32, 32).ToBitmap(); } catch { }
+        try { using (var st = Assembly.GetExecutingAssembly().GetManifestResourceStream("logo.png")) if (st != null) { logoBig = new Bitmap(st); if (logo != null) logo.Dispose(); logo = Scaled(logoBig, 64); } } catch { }
 
         // Restrained chrome; navigation and actions live in the two-column layout below.
         titleBar.Paint += (s, e) => {
             var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
-            if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(logo, new Rectangle(14, 10, 20, 20)); }
+            if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImageUnscaled(LogoAt(20), 14, 10); }
             else Icons.Draw(g, "sparkle", new RectangleF(16, 11, 18, 18), Theme.Accent);
             using (var line = new SolidBrush(Theme.Border)) g.FillRectangle(line, 0, Header - 1, W, 1);
         };
@@ -518,9 +528,9 @@ class Wizard : Form {
 
         sidebar.Paint += DrawSidebar;
         // Utility destinations are deliberately attached to the rail, not the workflow footer.
-        site = new IconButton("folder", 32) { Location = new Point(20, sidebar.Height - 54) };
-        code = new IconButton("code", 32) { Location = new Point(62, sidebar.Height - 54) };
-        heart = new IconButton("heart", 32) { Location = new Point(104, sidebar.Height - 54) };
+        site = new IconButton("folder", 42) { Location = new Point(20, sidebar.Height - 62) };
+        code = new IconButton("code", 42) { Location = new Point(72, sidebar.Height - 62) };
+        heart = new IconButton("heart", 42) { Location = new Point(124, sidebar.Height - 62) };
         site.Click += (s, e) => { Directory.CreateDirectory(DataDir); Process.Start("explorer.exe", DataDir); };
         code.Click += (s, e) => { var p = Path.Combine(DataDir, "plugins"); Directory.CreateDirectory(p); Process.Start("explorer.exe", p); };
         heart.Click += (s, e) => ToggleCredits();
@@ -554,7 +564,7 @@ class Wizard : Form {
     void DrawSidebar(object sender, PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
         using (var edge = new Pen(Theme.Border)) g.DrawLine(edge, Side - 1, 0, Side - 1, sidebar.Height);
-        if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImage(logo, new Rectangle(20, 18, 30, 30)); }
+        if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImageUnscaled(LogoAt(30), 20, 18); }
         else Icons.Draw(g, "sparkle", new RectangleF(22, 20, 26, 26), Theme.Accent);
         Theme.Draw(g, "Lumicord", Theme.F(14, FontStyle.Bold), new RectangleF(62, 18, 130, 22), Theme.Text);
         Theme.Draw(g, "Installer", Theme.F(9), new RectangleF(63, 40, 120, 16), Theme.Muted);
@@ -569,7 +579,7 @@ class Wizard : Form {
             else { using (var p = Theme.Round(new RectangleF(20, y + 6, 18, 18), 5)) using (var pen = new Pen(current ? Theme.Accent : Theme.Border)) g.DrawPath(pen, p); Icons.Draw(g, ico[i], new RectangleF(24, y + 10, 10, 10), c); }
             Theme.Draw(g, names[i], Theme.F(10.5f, current ? FontStyle.Bold : FontStyle.Regular), new RectangleF(50, y + 4, 145, 24), current ? Theme.Text : (done ? Theme.Text : Theme.Muted), StringAlignment.Near, StringAlignment.Center);
         }
-        using (var p = new Pen(Theme.Border)) g.DrawLine(p, 20, sidebar.Height - 70, Side - 20, sidebar.Height - 70);
+        using (var p = new Pen(Theme.Border)) g.DrawLine(p, 20, sidebar.Height - 78, Side - 20, sidebar.Height - 78);
     }
 
     protected override void OnHandleCreated(EventArgs e) {
@@ -613,7 +623,7 @@ class Wizard : Form {
     }
     void Subheading(string text) { body.Controls.Add(new Label { Text = text, Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(33, 58), AutoSize = true }); }
     void Welcome() {
-        if (logo != null) body.Controls.Add(new PictureBox { Image = logo, Location = new Point(32, 94), Size = new Size(62, 62), SizeMode = PictureBoxSizeMode.Zoom });
+        if (logo != null) body.Controls.Add(new PictureBox { Image = LogoAt(64), Location = new Point(32, 92), Size = new Size(64, 64), SizeMode = PictureBoxSizeMode.Normal });
         else { var mark = new Canvas { Location = new Point(32,94), Size = new Size(62,62), BackColor = Theme.Bg }; mark.Paint += (o,e) => Icons.Draw(e.Graphics,"sparkle",new RectangleF(8,8,46,46),Theme.Accent); body.Controls.Add(mark); }
         var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
         body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
