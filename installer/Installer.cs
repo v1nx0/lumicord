@@ -52,6 +52,7 @@ static class Theme {
         p.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90); p.AddArc(r.X, r.Bottom - d, d, d, 90, 90); p.CloseFigure(); return p;
     }
     public static float Ease(float t) { return 1 - (float)Math.Pow(1 - t, 3); }
+    public static float Back(float t) { float c = 1.70158f; t -= 1; return 1 + (c + 1) * t * t * t + c * t * t; } // overshoot
 }
 
 // Vector icons drawn with GDI+ paths (no font glyphs or brand logos).
@@ -249,7 +250,11 @@ class Row : AnimControl {
         Icon = icon; Title = title; Sub = sub; Size = new Size(612, 64);
         if (withBrowse) { Browse = new FlatButton("Browse", BtnStyle.Outline) { Size = new Size(90, 34), Location = new Point(612 - 90 - 15, 15) }; Controls.Add(Browse); }
     }
-    protected override bool Animating { get { float t = Anim.Step(sel, Selected ? 1 : 0); bool ch = t != sel; sel = t; if (ch && Browse != null) { Browse.Style = Selected ? BtnStyle.Light : BtnStyle.Outline; Browse.BackColor = BackColorNow; Browse.Invalidate(); } return ch; } }
+    float bounceAt = -1; bool wasSelected;
+    protected override bool Animating { get {
+        if (Selected && !wasSelected) bounceAt = Anim.Now; wasSelected = Selected;
+        bool bouncing = bounceAt >= 0 && Anim.Now - bounceAt < .45f;
+        float t = Anim.Step(sel, Selected ? 1 : 0); bool ch = t != sel || bouncing; sel = t; if (ch && Browse != null) { Browse.Style = Selected ? BtnStyle.Light : BtnStyle.Outline; Browse.BackColor = BackColorNow; Browse.Invalidate(); } return ch; } }
     Color BackColorNow { get { return Theme.Mix(Theme.Mix(Theme.Surface, Theme.SurfaceHover, Found ? hover : 0), Theme.Alpha(Theme.Accent, 42), sel); } }
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.Clear(Parent.BackColor);
@@ -261,7 +266,9 @@ class Row : AnimControl {
         if (Browse != null && Browse.BackColor != back) { Browse.BackColor = back; Browse.Invalidate(); }
         var fg = !Found ? Theme.Alpha(Theme.Muted, 150) : Theme.Mix(Theme.Text, Color.White, sel);
         var sub = !Found ? Theme.Alpha(Theme.Muted, 120) : Theme.Mix(Theme.Muted, Theme.Alpha(Color.White, 220), sel);
-        // icon tile
+        // icon tile; it bounces once when the card gets selected
+        float bt = bounceAt < 0 ? 1 : Math.Min(1, (Anim.Now - bounceAt) / .45f), sc = 1 + .18f * (float)Math.Sin(bt * Math.PI) * (1 - bt);
+        var saved = g.Save(); g.TranslateTransform(34, 32); g.ScaleTransform(sc, sc); g.TranslateTransform(-34, -32);
         if (AppIcon != null) {
             g.InterpolationMode = InterpolationMode.HighQualityBicubic;
             using (var ia = new System.Drawing.Imaging.ImageAttributes()) {
@@ -273,6 +280,7 @@ class Row : AnimControl {
             using (var tb = new SolidBrush(sel > 0.5f ? Theme.Alpha(Color.White, 40) : Theme.Bg)) g.FillPath(tb, tile);
             Icons.Draw(g, Icon, new RectangleF(24, 22, 20, 20), Icon == "trash" ? Theme.Danger : (Found ? Theme.Mix(Theme.Muted, Theme.Accent, sel) : Theme.Muted));
         }
+        g.Restore(saved);
         int textW = Width - 70 - (Browse != null ? 120 : 20);
         Theme.Draw(g, Title, Theme.F(11.5f, FontStyle.Bold), new RectangleF(66, 11, textW, 22), fg);
         Theme.Draw(g, Sub, Theme.F(9.5f), new RectangleF(66, 33, textW, 20), sub);
@@ -318,19 +326,62 @@ class Bar : AnimControl {
 
 // Quiet, flat progress/status mark used by the final screen.
 class StatusRing : AnimControl {
-    public bool Working = true, Success = true; float spin;
-    public StatusRing() { Size = new Size(82, 82); Cursor = Cursors.Default; }
-    protected override bool Animating { get { if (Working) { spin += .055f; if (spin > 1) spin -= 1; return true; } return false; } }
+    public bool Working = true; bool success = true; float spin, doneAt = -1;
+    public bool Success { get { return success; } set { success = value; } }
+    struct Dot { public float X, Y, VX, VY, R; public Color C; }
+    readonly List<Dot> dots = new List<Dot>(); readonly Random rnd = new Random();
+    // Wide control so the confetti has room; the ring itself is 82px in the middle.
+    public StatusRing() { Size = new Size(280, 116); Cursor = Cursors.Default; }
+    public void Finish(bool ok) {
+        Working = false; success = ok; doneAt = Anim.Now; dots.Clear();
+        if (ok) for (int i = 0; i < 40; i++) {
+            double a = rnd.NextDouble() * Math.PI * 2; float sp = 2.2f + (float)rnd.NextDouble() * 3.4f;
+            dots.Add(new Dot { X = Width / 2f, Y = Height / 2f, VX = (float)Math.Cos(a) * sp, VY = (float)Math.Sin(a) * sp - 2.2f, R = 2 + (float)rnd.NextDouble() * 2.5f,
+                C = i % 3 == 0 ? Color.White : i % 3 == 1 ? Theme.Accent : Color.FromArgb(249, 168, 212) });
+        }
+        Invalidate();
+    }
+    float Since { get { return doneAt < 0 ? 99 : Anim.Now - doneAt; } }
+    protected override bool Animating { get {
+        // Working: speed varies a little each turn so it feels less mechanical.
+        if (Working) { spin += .035f + .025f * (float)Math.Abs(Math.Sin(spin * Math.PI)); if (spin > 1) spin -= 1; return true; }
+        if (Since < 1.0f) {
+            for (int i = 0; i < dots.Count; i++) { var d = dots[i]; d.X += d.VX; d.Y += d.VY; d.VY += .18f; d.VX *= .985f; dots[i] = d; }
+            return true;
+        }
+        if (dots.Count > 0) { dots.Clear(); return true; }
+        return false;
+    } }
     protected override void OnPaint(PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; g.Clear(Parent.BackColor);
-        var r = new RectangleF(7, 7, Width - 14, Height - 14); Color c = Success ? Theme.Accent : Theme.Danger;
+        float t = Math.Min(1, Since / .45f), shake = !Working && !success && Since < .4f ? (float)Math.Sin(Since * 50) * 6 * (1 - Since / .4f) : 0;
+        float ox = (Width - 82) / 2f + shake, oy = (Height - 82) / 2f;
+        var r = new RectangleF(ox + 7, oy + 7, 68, 68); Color c = success ? Theme.Accent : Theme.Danger;
         using (var p = new Pen(Theme.Border, 5)) g.DrawEllipse(p, r);
         using (var p = new Pen(c, 5) { StartCap = LineCap.Round, EndCap = LineCap.Round }) {
-            if (Working) g.DrawArc(p, r, spin * 360, 105);
-            else if (Success) g.DrawLines(p, new[] { new PointF(24, 42), new PointF(35, 53), new PointF(59, 29) });
-            else { g.DrawLine(p, 28, 28, 54, 54); g.DrawLine(p, 54, 28, 28, 54); }
+            if (Working) g.DrawArc(p, r, spin * 360, 80 + 60 * (float)Math.Abs(Math.Sin(spin * Math.PI * 2)));
+            else {
+                g.DrawArc(p, r, -90, 360 * Theme.Ease(Math.Min(1, Since / .35f))); // ring closes
+                float k = Theme.Ease(Math.Max(0, Math.Min(1, (Since - .15f) / .3f)));
+                if (success) DrawPart(g, p, new[] { new PointF(ox + 26, oy + 42), new PointF(ox + 36, oy + 52), new PointF(ox + 57, oy + 31) }, k);
+                else { DrawPart(g, p, new[] { new PointF(ox + 30, oy + 30), new PointF(ox + 52, oy + 52) }, k); DrawPart(g, p, new[] { new PointF(ox + 52, oy + 30), new PointF(ox + 30, oy + 52) }, k); }
+            }
         }
+        float fade = Math.Max(0, 1 - Since / 1.0f);
+        foreach (var d in dots) using (var b = new SolidBrush(Theme.Alpha(d.C, (int)(255 * fade)))) g.FillEllipse(b, d.X - d.R, d.Y - d.R, d.R * 2, d.R * 2);
     }
+    // Draws the first k (0..1) of a polyline, for "draw-on" strokes.
+    static void DrawPart(Graphics g, Pen p, PointF[] pts, float k) {
+        if (k <= 0) return;
+        float total = 0; for (int i = 1; i < pts.Length; i++) total += Dist(pts[i - 1], pts[i]);
+        float left = total * k; var list = new List<PointF> { pts[0] };
+        for (int i = 1; i < pts.Length && left > 0; i++) {
+            float d = Dist(pts[i - 1], pts[i]), f = Math.Min(1, left / d);
+            list.Add(new PointF(pts[i - 1].X + (pts[i].X - pts[i - 1].X) * f, pts[i - 1].Y + (pts[i].Y - pts[i - 1].Y) * f)); left -= d;
+        }
+        if (list.Count > 1) g.DrawLines(p, list.ToArray());
+    }
+    static float Dist(PointF a, PointF b) { return (float)Math.Sqrt((a.X - b.X) * (a.X - b.X) + (a.Y - b.Y) * (a.Y - b.Y)); }
 }
 
 class Canvas : Panel { public Canvas() { DoubleBuffered = true; SetStyle(ControlStyles.UserPaint | ControlStyles.ResizeRedraw | ControlStyles.AllPaintingInWmPaint | ControlStyles.SupportsTransparentBackColor, true); } }
@@ -473,7 +524,7 @@ class Wizard : Form {
     [DllImport("user32.dll")] static extern int SendMessage(IntPtr h, int msg, int w, int l);
     [DllImport("dwmapi.dll")] static extern int DwmSetWindowAttribute(IntPtr h, int attr, ref int v, int size);
 
-    const int W = 820, H = 520, Side = 220, Header = 44, Foot = 68;
+    const int W = 850, H = 540, Side = 250, Header = 44, Foot = 68;
     int step;
     string action, channel;
     readonly Dictionary<string, string> customDirs = new Dictionary<string, string>(); // channel -> folder picked with Browse
@@ -482,7 +533,7 @@ class Wizard : Form {
     readonly Canvas viewport = new Canvas { Location = new Point(Side, Header), Size = new Size(W - Side, H - Header - Foot), BackColor = Theme.Bg };
     Canvas body;
     float slideStart = -1; int slideDir = 1;
-    float progress; // title-bar progress line (0..1)
+    float progress; int frame; // sidebar marker position (step units), frame counter
     Bitmap logo;               // the app icon, drawn small in the title bar
     Bitmap logoBig;            // 512px source (bundled logo.png) for sharp large renders
     // Downscale once with high-quality filtering; drawing a big bitmap small every frame (or a small one big) blurs.
@@ -527,10 +578,13 @@ class Wizard : Form {
         titleBar.Controls.Add(min); titleBar.Controls.Add(close);
 
         sidebar.Paint += DrawSidebar;
+        sidebar.MouseMove += (s, e) => { int i = (e.Y - RailTop) / RailRow; hoverRow = e.Y >= RailTop && i < 5 ? i : -1; };
+        sidebar.MouseLeave += (s, e) => hoverRow = -1;
         // Utility destinations are deliberately attached to the rail, not the workflow footer.
-        site = new IconButton("folder", 42) { Location = new Point(20, sidebar.Height - 62) };
-        code = new IconButton("code", 42) { Location = new Point(72, sidebar.Height - 62) };
-        heart = new IconButton("heart", 42) { Location = new Point(124, sidebar.Height - 62) };
+        // three big buttons spread evenly across the sidebar
+        site = new IconButton("folder", 46) { Location = new Point(Side / 4 - 23, sidebar.Height - 66) };
+        code = new IconButton("code", 46) { Location = new Point(Side / 2 - 23, sidebar.Height - 66) };
+        heart = new IconButton("heart", 46) { Location = new Point(Side * 3 / 4 - 23, sidebar.Height - 66) };
         site.Click += (s, e) => { Directory.CreateDirectory(DataDir); Process.Start("explorer.exe", DataDir); };
         code.Click += (s, e) => { var p = Path.Combine(DataDir, "plugins"); Directory.CreateDirectory(p); Process.Start("explorer.exe", p); };
         heart.Click += (s, e) => ToggleCredits();
@@ -551,8 +605,15 @@ class Wizard : Form {
     void OnAnimationTick() {
             if (IsDisposed) return;
             if (Opacity < 1 && !closing) Opacity = Math.Min(1, Opacity + 0.1);
-            float n = Anim.Step(progress, step, 0.16f);
-            if (n != progress) { progress = n; sidebar.Invalidate(); }
+            float n = Anim.Step(progress, step, 0.14f);
+            bool side = n != progress; progress = n;
+            for (int i = 0; i < 5; i++) { float h = Anim.Step(rowHover[i], i == hoverRow ? 1 : 0, .2f); if (h != rowHover[i]) { rowHover[i] = h; side = true; } }
+            for (int i = 0; i < 5; i++) if (doneAt[i] >= 0 && Anim.Now - doneAt[i] < .45f) side = true;
+            bool alive = Form.ActiveForm == this && WindowState != FormWindowState.Minimized;
+            if (alive && ++frame % 2 == 0) side = true; // breathing badge, 30fps
+            if (side) sidebar.Invalidate(new Rectangle(0, RailTop - 12, Side, RailRow * 5 + 24));
+            AnimateEntrance();
+            if (alive && step == 0 && body != null && frame % 2 == 0) WelcomeTick();
             if (body != null && slideStart >= 0) {
                 float t = Math.Min(1, (Anim.Now - slideStart) / 0.25f);
                 body.Left = (int)((1 - Theme.Ease(t)) * 24 * slideDir);
@@ -561,25 +622,56 @@ class Wizard : Form {
     }
     protected override void Dispose(bool disposing) { Anim.Tick -= OnAnimationTick; if (logo != null) logo.Dispose(); base.Dispose(disposing); }
 
+    // Sidebar rail: hover tint per row, sliding marker that stretches while it moves, done badges that pop,
+    // and a slow "breathing" current badge.
+    const int RailTop = 104, RailRow = 58;
+    int hoverRow = -1; readonly float[] rowHover = new float[5]; readonly float[] doneAt = { -1, -1, -1, -1, -1 };
+    static readonly string version = ReadVersion();
+    static string ReadVersion() {
+        try { using (var st = Assembly.GetExecutingAssembly().GetManifestResourceStream("files/version.json")) using (var rd = new StreamReader(st)) {
+            var m = System.Text.RegularExpressions.Regex.Match(rd.ReadToEnd(), "\"version\"\\s*:\\s*\"([^\"]+)\""); return m.Success ? m.Groups[1].Value : ""; } } catch { return ""; }
+    }
     void DrawSidebar(object sender, PaintEventArgs e) {
         var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias;
         using (var edge = new Pen(Theme.Border)) g.DrawLine(edge, Side - 1, 0, Side - 1, sidebar.Height);
-        if (logo != null) { g.InterpolationMode = InterpolationMode.HighQualityBicubic; g.DrawImageUnscaled(LogoAt(30), 20, 18); }
-        else Icons.Draw(g, "sparkle", new RectangleF(22, 20, 26, 26), Theme.Accent);
-        Theme.Draw(g, "Lumicord", Theme.F(14, FontStyle.Bold), new RectangleF(62, 18, 130, 22), Theme.Text);
-        Theme.Draw(g, "Installer", Theme.F(9), new RectangleF(63, 40, 120, 16), Theme.Muted);
+        if (logo != null) g.DrawImageUnscaled(LogoAt(42), 22, 22);
+        else Icons.Draw(g, "sparkle", new RectangleF(24, 24, 36, 36), Theme.Accent);
+        Theme.Draw(g, "Lumicord", Theme.F(16, FontStyle.Bold), new RectangleF(74, 20, 160, 28), Theme.Text);
+        Theme.Draw(g, version.Length > 0 ? "Installer  ·  v" + version : "Installer", Theme.F(9.5f), new RectangleF(75, 46, 160, 18), Theme.Muted);
         string[] names = { "Welcome", "License", "Action", "Discord version", "Install" };
         string[] ico = { "sparkle", "doc", "windowcheck", "app", "download" };
-        float markerY = 92 + progress * 48;
-        using (var b = new SolidBrush(Theme.Accent)) g.FillRectangle(b, 0, markerY, 3, 30);
+        float stretch = Math.Abs(progress - step) * 26;
+        float markerY = RailTop + 10 + Math.Min(progress, step) * RailRow + (progress > step ? 0 : 0);
+        using (var b = new SolidBrush(Theme.Accent)) using (var mp = Theme.Round(new RectangleF(0, RailTop + 8 + progress * RailRow - stretch / 2, 4, 42 + stretch), 2)) g.FillPath(b, mp);
+        float breathe = Form.ActiveForm == this ? 1 + .05f * (float)Math.Sin(Anim.Now * 2.6) : 1;
         for (int i = 0; i < names.Length; i++) {
-            float y = 92 + i * 48; bool current = i == step && !installDone, done = i < step || (i == step && installDone);
-            Color c = current ? Theme.Accent : done ? Theme.Accent : Theme.Muted;
-            if (done) { using (var b = new SolidBrush(Theme.Accent)) g.FillEllipse(b, 20, y + 6, 18, 18); Icons.Draw(g, "check", new RectangleF(23, y + 9, 12, 12), Color.White); }
-            else { using (var p = Theme.Round(new RectangleF(20, y + 6, 18, 18), 5)) using (var pen = new Pen(current ? Theme.Accent : Theme.Border)) g.DrawPath(pen, p); Icons.Draw(g, ico[i], new RectangleF(24, y + 10, 10, 10), c); }
-            Theme.Draw(g, names[i], Theme.F(10.5f, current ? FontStyle.Bold : FontStyle.Regular), new RectangleF(50, y + 4, 145, 24), current ? Theme.Text : (done ? Theme.Text : Theme.Muted), StringAlignment.Near, StringAlignment.Center);
+            float y = RailTop + i * RailRow; bool current = i == step && !installDone, done = i < step || (i == step && installDone);
+            if (rowHover[i] > .01f) using (var hb = new SolidBrush(Theme.Alpha(Color.White, (int)(10 * rowHover[i])))) using (var hp = Theme.Round(new RectangleF(10, y + 4, Side - 20, RailRow - 8), 8)) g.FillPath(hb, hp);
+            float cx = 36, cy = y + RailRow / 2f, size = 28;
+            if (done) {
+                float t = doneAt[i] < 0 ? 1 : Math.Min(1, (Anim.Now - doneAt[i]) / .4f), sc = .6f + .4f * Theme.Back(t);
+                float sz = size * sc;
+                using (var b = new SolidBrush(Theme.Accent)) g.FillEllipse(b, cx - sz / 2, cy - sz / 2, sz, sz);
+                using (var p = new Pen(Color.White, 2.2f) { StartCap = LineCap.Round, EndCap = LineCap.Round, LineJoin = LineJoin.Round }) {
+                    float k = Theme.Ease(Math.Max(0, Math.Min(1, (t - .3f) / .7f)));
+                    var a1 = new PointF(cx - 6, cy); var a2 = new PointF(cx - 2, cy + 4); var a3 = new PointF(cx + 6, cy - 4);
+                    if (k > 0) {
+                        if (k < .4f) g.DrawLine(p, a1, new PointF(a1.X + (a2.X - a1.X) * k / .4f, a1.Y + (a2.Y - a1.Y) * k / .4f));
+                        else g.DrawLines(p, new[] { a1, a2, new PointF(a2.X + (a3.X - a2.X) * (k - .4f) / .6f, a2.Y + (a3.Y - a2.Y) * (k - .4f) / .6f) });
+                    }
+                }
+            } else {
+                float sz = current ? size * breathe : size;
+                using (var p = Theme.Round(new RectangleF(cx - sz / 2, cy - sz / 2, sz, sz), 8)) {
+                    if (current) using (var fb = new SolidBrush(Theme.Alpha(Theme.Accent, 38))) g.FillPath(fb, p);
+                    using (var pen = new Pen(current ? Theme.Accent : Theme.Border, 1.5f)) g.DrawPath(pen, p);
+                }
+                Icons.Draw(g, ico[i], new RectangleF(cx - 7, cy - 7, 14, 14), current ? Theme.Accent : Theme.Mix(Theme.Muted, Theme.Text, rowHover[i] * .5f));
+            }
+            Theme.Draw(g, names[i], Theme.F(12, current ? FontStyle.Bold : FontStyle.Regular), new RectangleF(64, y, Side - 74, RailRow),
+                current || done ? Theme.Text : Theme.Mix(Theme.Muted, Theme.Text, rowHover[i] * .6f), StringAlignment.Near, StringAlignment.Center);
         }
-        using (var p = new Pen(Theme.Border)) g.DrawLine(p, 20, sidebar.Height - 78, Side - 20, sidebar.Height - 78);
+        using (var p = new Pen(Theme.Border)) g.DrawLine(p, 20, sidebar.Height - 82, Side - 20, sidebar.Height - 82);
     }
 
     protected override void OnHandleCreated(EventArgs e) {
@@ -610,9 +702,37 @@ class Wizard : Form {
         if (body != null) { viewport.Controls.Remove(body); body.Dispose(); }
         body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg, Left = 12 * slideDir };
         viewport.Controls.Add(body);
-        slideStart = Anim.Now;
-        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started" : "Next"; next.Enabled = true;
+        slideStart = Anim.Now; welcomeLogo = null;
+        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started  \u2192" : "Next"; next.Enabled = true;
+        for (int i = 0; i < 5; i++) if (i < s && doneAt[i] < 0) doneAt[i] = Anim.Now + (i == s - 1 ? 0 : -1); // only the step just finished pops
         if (s == 0) Welcome(); else if (s == 1) License(); else if (s == 2) Actions(); else if (s == 3) Channels(); else RunInstall();
+        StartEntrance();
+    }
+
+    // Entrance: each element of the new step rises 14px into place, one after another.
+    class Entering { public Control C; public int Top; public float Delay; }
+    readonly List<Entering> entering = new List<Entering>(); float enterStart;
+    void StartEntrance() {
+        entering.Clear(); enterStart = Anim.Now; int k = 0;
+        foreach (Control c in body.Controls) {
+            if (!c.Visible) continue; // e.g. the hidden install log
+            entering.Add(new Entering { C = c, Top = c.Top, Delay = k++ * .05f });
+            c.Top += 14; c.Visible = false;
+        }
+        AnimateEntrance();
+    }
+    void AnimateEntrance() {
+        if (entering.Count == 0) return;
+        bool left = false;
+        foreach (var en in entering) {
+            float t = (Anim.Now - enterStart - en.Delay) / .28f;
+            if (t <= 0) { left = true; continue; }
+            if (en.C.IsDisposed) continue;
+            en.C.Visible = true; t = Math.Min(1, t);
+            en.C.Top = en.Top + (int)Math.Round((1 - Theme.Ease(t)) * 14);
+            if (t < 1) left = true;
+        }
+        if (!left) entering.Clear();
     }
 
     // Title row: accent icon + bold title.
@@ -622,13 +742,28 @@ class Wizard : Form {
         body.Controls.Add(l); return l;
     }
     void Subheading(string text) { body.Controls.Add(new Label { Text = text, Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(33, 58), AutoSize = true }); }
+    PictureBox welcomeLogo;
+    // Soft flat shapes drifting slowly on the right of the welcome screen (no glow, very low alpha).
+    void DrawWelcomeShapes(object sender, PaintEventArgs e) {
+        var g = e.Graphics; g.SmoothingMode = SmoothingMode.AntiAlias; float t = Anim.Now;
+        Action<float, float, float, Color> blob = (x, y, r, c) => { using (var b = new SolidBrush(c)) g.FillEllipse(b, x - r, y - r, r * 2, r * 2); };
+        blob(500 + (float)Math.Sin(t * .35) * 22, 120 + (float)Math.Cos(t * .28) * 16, 110, Theme.Alpha(Theme.Accent, 14));
+        blob(430 + (float)Math.Cos(t * .22) * 26, 300 + (float)Math.Sin(t * .31) * 18, 80, Theme.Alpha(Color.FromArgb(168, 85, 247), 14));
+        blob(560 + (float)Math.Sin(t * .27 + 1) * 18, 330 + (float)Math.Cos(t * .2) * 22, 50, Theme.Alpha(Theme.Accent, 18));
+    }
+    void WelcomeTick() {
+        if (entering.Count > 0) return; // let the entrance finish first
+        if (welcomeLogo != null && !welcomeLogo.IsDisposed) welcomeLogo.Top = 82 + (int)Math.Round(Math.Sin(Anim.Now * 1.6) * 3);
+        body.Invalidate(new Rectangle(330, 0, body.Width - 330, body.Height)); // only the shapes' area
+    }
     void Welcome() {
-        if (logo != null) body.Controls.Add(new PictureBox { Image = LogoAt(64), Location = new Point(32, 92), Size = new Size(64, 64), SizeMode = PictureBoxSizeMode.Normal });
+        body.Paint += DrawWelcomeShapes;
+        if (logo != null) body.Controls.Add(welcomeLogo = new PictureBox { Image = LogoAt(72), Location = new Point(32, 82), Size = new Size(72, 72), SizeMode = PictureBoxSizeMode.Normal });
         else { var mark = new Canvas { Location = new Point(32,94), Size = new Size(62,62), BackColor = Theme.Bg }; mark.Paint += (o,e) => Icons.Draw(e.Graphics,"sparkle",new RectangleF(8,8,46,46),Theme.Accent); body.Controls.Add(mark); }
         var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
         body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
         string[] text = { "BetterDiscord plugins & themes", "Built-in Marketplace", "Signed automatic updates" }; string[] icon = { "puzzle", "store", "shield" };
-        for (int i=0;i<3;i++) { int y=254+i*34; var row = new Canvas { Location=new Point(32,y), Size=new Size(360,28), BackColor=Theme.Bg }; int n=i; row.Paint += (o,e) => { Icons.Draw(e.Graphics,icon[n],new RectangleF(2,5,18,18),Theme.Accent); Theme.Draw(e.Graphics,text[n],Theme.F(10.5f),new RectangleF(32,1,310,26),Theme.Text,StringAlignment.Near,StringAlignment.Center); }; body.Controls.Add(row); }
+        for (int i=0;i<3;i++) { int y=254+i*34; var row = new Canvas { Location=new Point(32,y), Size=new Size(290,28), BackColor=Theme.Bg }; int n=i; row.Paint += (o,e) => { Icons.Draw(e.Graphics,icon[n],new RectangleF(2,5,18,18),Theme.Accent); Theme.Draw(e.Graphics,text[n],Theme.F(10.5f),new RectangleF(32,1,310,26),Theme.Text,StringAlignment.Near,StringAlignment.Center); }; body.Controls.Add(row); }
     }
 
     // Credits: an in-window panel over the current step (not a Windows message box), with clickable links.
@@ -760,7 +895,7 @@ class Wizard : Form {
     }
 
     void RunInstall() {
-        var ring = new StatusRing { Location = new Point(259, 76), Working = true };
+        var ring = new StatusRing { Location = new Point(160, 59), Working = true };
         var head = new Label { Text = action == "uninstall" ? "Uninstalling" : action == "repair" ? "Repairing" : "Installing", Font = Theme.F(18, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(0, 168), Size = new Size(600, 38), TextAlign = ContentAlignment.MiddleCenter };
         var sub = new Label { Text = "This may take a moment.", Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(0, 212), Size = new Size(600, 22), TextAlign = ContentAlignment.MiddleCenter };
         var details = new FlatButton("Show details", BtnStyle.Outline) { Location = new Point(235, 260), Size = new Size(130, 32), BackColor = Theme.Bg };
@@ -780,7 +915,7 @@ class Wizard : Form {
             catch (Exception ex) { ok = false; say(""); say("Failed: " + ex.Message); }
             BeginInvoke((Action)(() => {
                 installing = false;
-                ring.Working = false; ring.Success = ok; ring.Invalidate();
+                ring.Finish(ok);
                 head.Text = ok ? (a == "uninstall" ? "Uninstalled" : "Installed") : "Something went wrong";
                 installDone = ok; sidebar.Invalidate();
                 sub.Text = ok ? "Lumicord is ready for Discord." : "Review the details and try again.";
@@ -824,7 +959,8 @@ class Wizard : Form {
         step = 4; installDone = ok && complete;
         if (body != null) { viewport.Controls.Remove(body); body.Dispose(); }
         body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg }; viewport.Controls.Add(body);
-        var ring = new StatusRing { Location = new Point(259, 76), Working = !complete, Success = ok };
+        var ring = new StatusRing { Location = new Point(160, 59), Working = !complete, Success = ok };
+        if (complete) ring.Finish(ok);
         var h = new Label { Text = complete ? (ok ? "Installed" : "Something went wrong") : "Installing", Font = Theme.F(18, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(0,168), Size = new Size(600,38), TextAlign = ContentAlignment.MiddleCenter };
         var sub = new Label { Text = complete ? (ok ? "Lumicord is ready for Discord." : "Review the details and try again.") : "This may take a moment.", Font = Theme.F(10), ForeColor = Theme.Muted, Location = new Point(0,212), Size = new Size(600,22), TextAlign = ContentAlignment.MiddleCenter };
         var details = new FlatButton("Show details", BtnStyle.Outline) { Location = new Point(235,260), Size = new Size(130,32), BackColor = Theme.Bg };
