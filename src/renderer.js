@@ -1262,7 +1262,25 @@
         const sw = (on, fn) => toggle(on, fn);
         let nth = 0;
         const section = (title, ...rows) => h("div", { class: "lumi-card lumi-set-card", style: { animationDelay: (nth++ * 45) + "ms" } }, h("div", { class: "lumi-set-title" }, title), ...rows);
-        const select = (value, options, key) => h("select", { class: "lumi-input", onChange: e => setCustom({ [key]: /^(1|6|24|1000|3000|5000|10000)$/.test(e.target.value) ? Number(e.target.value) : e.target.value }) }, options.map(([v, label]) => h("option", { value: v, selected: String(v) === String(value) }, label)));
+        // Our own dropdown: the native <select> list is drawn by Windows and can't be styled.
+        const select = (value, options, key) => {
+            const label = v => (options.find(o => String(o[0]) === String(v)) || options[0])[1];
+            const btn = h("button", { class: "lumi-input lumi-dd", ariaHasPopup: "listbox" }, label(value));
+            btn.addEventListener("click", e => {
+                e.stopPropagation();
+                const open = document.querySelector(".lumi-dd-menu"); if (open) { open.remove(); if (open.owner === btn) return; }
+                const menu = h("div", { class: "lumi-dd-menu", role: "listbox" }, options.map(([v, text]) => h("button", {
+                    class: "lumi-dd-item" + (String(v) === String(value) ? " on" : ""), role: "option",
+                    onClick: () => { value = v; btn.textContent = text; menu.remove(); setCustom({ [key]: v }); } }, text)));
+                menu.owner = btn;
+                const r = btn.getBoundingClientRect(), up = r.bottom + options.length * 36 + 16 > innerHeight;
+                Object.assign(menu.style, { minWidth: r.width + "px", left: r.right - Math.max(r.width, 150) + "px", [up ? "bottom" : "top"]: (up ? innerHeight - r.top + 6 : r.bottom + 6) + "px" });
+                document.body.append(menu);
+                const close = ev => { if (!menu.contains(ev.target) && ev.target !== btn) { menu.remove(); document.removeEventListener("pointerdown", close, true); } };
+                document.addEventListener("pointerdown", close, true);
+            });
+            return btn;
+        };
 
         const mark = a => [...swatches.children].forEach(b => b.classList.toggle("on", b.title === a));
         const custom1 = colorPicker(c.accent, v => { mark(v); setCustom({ accent: v }); });
@@ -1825,10 +1843,16 @@
       .lumi-set-card input[type=range]::-webkit-slider-thumb{-webkit-appearance:none;width:18px;height:18px;border-radius:50%;background:#fff;
         box-shadow:0 0 0 4px color-mix(in srgb,var(--lumi-accent) 30%,transparent),0 2px 6px #0006;transition:transform .15s,box-shadow .2s}
       .lumi-set-card input[type=range]:hover::-webkit-slider-thumb{transform:scale(1.15);box-shadow:0 0 0 7px color-mix(in srgb,var(--lumi-accent) 25%,transparent),0 2px 6px #0006}
-      .lumi-set-card select.lumi-input{-webkit-appearance:none;appearance:none;min-width:150px;padding-right:34px;cursor:pointer;
+      .lumi-dd{text-align:left;min-width:150px;padding-right:34px;cursor:pointer;
         background-image:url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='12' height='12' viewBox='0 0 24 24'%3E%3Cpath fill='none' stroke='%23b5bac1' stroke-width='3' d='m6 9 6 6 6-6'/%3E%3C/svg%3E");
         background-repeat:no-repeat;background-position:right 12px center;transition:border-color .15s,box-shadow .15s}
-      .lumi-set-card select.lumi-input:hover{border-color:#ffffff30}
+      .lumi-dd:hover{border-color:#ffffff30}
+      .lumi-dd-menu{position:fixed;z-index:10000;padding:6px;border-radius:8px;background:var(--background-floating,#111214);
+        border:1px solid var(--border-subtle,#ffffff14);box-shadow:0 10px 30px #0008;animation:lumi-pop .14s ease-out both;display:flex;flex-direction:column;gap:2px}
+      .lumi-dd-item{background:none;border:0;border-radius:5px;padding:8px 10px;text-align:left;font:inherit;font-size:14px;cursor:pointer;
+        color:var(--interactive-normal,#b5bac1);transition:background .12s,color .12s}
+      .lumi-dd-item:hover{background:#ffffff0d;color:var(--interactive-hover,#fff)}
+      .lumi-dd-item.on{background:var(--lumi-accent);color:#fff}
       .lumi-set-card .lumi-input:focus{border-color:var(--lumi-accent)!important;box-shadow:0 0 0 3px color-mix(in srgb,var(--lumi-accent) 25%,transparent)!important}
       .lumi-css{width:100%;min-height:170px;margin:10px 0 14px;font-family:Consolas,"Cascadia Code",monospace;font-size:13px;line-height:1.55;
         resize:vertical;box-sizing:border-box;tab-size:2;transition:border-color .15s,box-shadow .15s}
