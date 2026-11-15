@@ -2,6 +2,8 @@
 
 A tiny Discord desktop client mod, written from scratch.
 
+Join the community: https://discord.gg/jFSshXPhRW
+
 > Client mods break Discord's Terms of Service. Use at your own risk.
 
 ## Install
