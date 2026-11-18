@@ -1,8 +1,10 @@
 # Lumicord command-line installer. No .exe needed.
 #   irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
-# Interactive like the .exe: license, action, Discord version. Skip prompts with $env:LUMICORD_ACCEPT=1,
+# Interactive like the .exe: license, action, Discord version (arrow keys, Enter, Esc cancels). Skip prompts with $env:LUMICORD_ACCEPT=1,
 # $env:LUMICORD_ACTION = install|repair|uninstall and $env:LUMICORD_DISCORD = discord|ptb|canary.
 # Mirrors Work() in installer/Installer.cs; keep the two in sync.
+& {
+[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $builds = [ordered]@{ Discord = 'Discord'; DiscordPTB = 'Discord PTB'; DiscordCanary = 'Discord Canary' }
@@ -25,22 +27,29 @@ function Menu($title, $items) {
         for ($i = 0; $i -lt $items.Count; $i++) { Write-Host "   $($i + 1)) $($items[$i])" }
         while ($true) { $n = (Read-Host "  Choose 1-$($items.Count)") -as [int]; if ($n -ge 1 -and $n -le $items.Count) { return $n - 1 } }
     }
-    $sel = 0; $top = [Console]::CursorTop; [Console]::CursorVisible = $false
+    # Reserve the lines first: printing near the bottom scrolls the window, which made a saved CursorTop stale
+    # and redrew the menu lower each time (the duplicate menu bug).
+    $n = $items.Count; for ($i = 0; $i -lt $n; $i++) { Write-Host "" }
+    $top = [Console]::CursorTop - $n; $w = [Math]::Max(20, [Console]::WindowWidth - 1)
+    $sel = 0; [Console]::CursorVisible = $false
     try {
         while ($true) {
             [Console]::SetCursorPosition(0, $top)
-            for ($i = 0; $i -lt $items.Count; $i++) {
-                if ($i -eq $sel) { Write-Host ("   > " + $items[$i]).PadRight(60) -ForegroundColor Magenta }
-                else { Write-Host ("     " + $items[$i]).PadRight(60) -ForegroundColor Gray }
+            for ($i = 0; $i -lt $n; $i++) {
+                $line = $(if ($i -eq $sel) { "   > " } else { "     " }) + $items[$i]
+                if ($line.Length -gt $w) { $line = $line.Substring(0, $w) }   # never wrap, wrapping also duplicates
+                Write-Host $line.PadRight($w) -ForegroundColor $(if ($i -eq $sel) { 'Magenta' } else { 'Gray' })
             }
             $k = [Console]::ReadKey($true).Key
-            if ($k -eq 'UpArrow') { $sel = ($sel - 1 + $items.Count) % $items.Count }
-            elseif ($k -eq 'DownArrow') { $sel = ($sel + 1) % $items.Count }
+            if ($k -eq 'UpArrow') { $sel = ($sel - 1 + $n) % $n }
+            elseif ($k -eq 'DownArrow') { $sel = ($sel + 1) % $n }
             elseif ($k -eq 'Enter') { return $sel }
+            elseif ($k -eq 'Escape') { throw 'Cancelled. Nothing was changed.' }
         }
-    } finally { [Console]::CursorVisible = $true }
+    } finally { [Console]::SetCursorPosition(0, $top + $n); [Console]::CursorVisible = $true }
 }
 
+try {
 Write-Host ""
 Write-Host "  Lumicord Installer" -ForegroundColor Magenta
 Write-Host "  A better Discord experience, made simple." -ForegroundColor DarkGray
@@ -64,7 +73,7 @@ By installing or using Lumicord you agree to these terms. If you do not agree, d
 9. LIMITATION OF LIABILITY - The authors are not liable for any damages, data loss or account actions from using Lumicord, its plugins or themes.
 10. CHANGES - New versions may update this agreement. Continuing to use Lumicord after an update means you accept the updated terms.
 '@ -ForegroundColor Gray
-    if ((Menu 'Do you accept the license agreement?' @('I accept', 'I do not accept')) -ne 0) { Write-Host "  Cancelled. Nothing was changed."; return }
+    if ((Menu 'Do you accept the license agreement?' @('I accept', 'I do not accept')) -ne 0) { throw 'Cancelled. Nothing was changed.' }
 }
 if (-not $action) { $action = @('install', 'repair', 'uninstall')[(Menu 'What do you want to do?' @('Install Lumicord', 'Repair (after a Discord update)', 'Uninstall'))] }
 if ($action -notin 'install', 'repair', 'uninstall') { throw "LUMICORD_ACTION must be install, repair or uninstall" }
@@ -137,3 +146,5 @@ if ($action -eq 'uninstall') {
 $update = Join-Path (Split-Path (Split-Path $res)) 'Update.exe'
 if ((Test-Path $update) -and -not $env:LUMICORD_NO_START) { Say "Starting $build..."; Start-Process $update "--processStart $build.exe" }
 Write-Host $(if ($action -eq 'uninstall') { 'Lumicord was removed.' } else { 'Done. Lumicord is in Discord User Settings.' }) -ForegroundColor Magenta
+} catch { Write-Host ""; Write-Host "  $($_.Exception.Message)" -ForegroundColor Red }
+}
