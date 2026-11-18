@@ -5,7 +5,8 @@
 # $env:LUMICORD_DISCORD = discord|ptb|canary, $env:LUMICORD_SEPARATE = 1|0.
 # Install logic mirrors Work() in installer/Installer.cs; keep the two in sync.
 & {
-[Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
+$oldSecurityProtocol = [Net.ServicePointManager]::SecurityProtocol
+[Net.ServicePointManager]::SecurityProtocol = $oldSecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
 $builds = [ordered]@{ Discord = 'Discord'; DiscordPTB = 'Discord PTB'; DiscordCanary = 'Discord Canary' }
@@ -42,14 +43,19 @@ function Screen($step, $title, $sub) {
     Write-Host ''
     P "  $($G.star) " accent -NoNewline; P 'Lumicord' text -Bold -NoNewline; P "  Installer $($G.mid) $ver" muted
     P ('  ' + ([string]$G.line * ((Width) - 4))) muted
-    Write-Host '  ' -NoNewline
-    for ($i = 0; $i -lt $steps.Count; $i++) {
-        if ($i -lt $step) { P "$($G.check) $($steps[$i])" accent -NoNewline }
-        elseif ($i -eq $step) { P "$($G.dot) $($steps[$i])" text -Bold -NoNewline }
-        else { P "$($G.ring) $($steps[$i])" muted -NoNewline }
-        if ($i -lt $steps.Count - 1) { P '   ' muted -NoNewline }
+    $rail = ($steps | ForEach-Object -Begin { $j = 0 } -Process { $mark = if ($j -lt $step) { $G.check } elseif ($j -eq $step) { $G.dot } else { $G.ring }; $j++; "$mark $_" }) -join '   '
+    if ($rail.Length -gt (Width) - 2) { P ("  Step $($step + 1)/$($steps.Count): $($steps[$step])") muted }
+    else {
+        Write-Host '  ' -NoNewline
+        for ($i = 0; $i -lt $steps.Count; $i++) {
+            if ($i -lt $step) { P "$($G.check) $($steps[$i])" accent -NoNewline }
+            elseif ($i -eq $step) { P "$($G.dot) $($steps[$i])" text -Bold -NoNewline }
+            else { P "$($G.ring) $($steps[$i])" muted -NoNewline }
+            if ($i -lt $steps.Count - 1) { P '   ' muted -NoNewline }
+        }
+        Write-Host ''
     }
-    Write-Host ''; Write-Host ''
+    Write-Host ''
     P "  $title" text -Bold
     if ($sub) { P "  $sub" muted }
     Write-Host ''
@@ -96,28 +102,36 @@ function FindRes($dir) {
 }
 # Loaders Lumicord wrote in any app-* folder of a build (a Discord update makes a new app-* without one).
 function Loaders($b) {
-    Get-ChildItem (DirOf $b) -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
-        ForEach-Object { Join-Path $_.FullName 'resources\app\index.js' } |
-        Where-Object { (Test-Path $_) -and ((Get-Content $_ -Raw) -match 'patcher\.js') }
+    foreach ($app in @(Get-ChildItem (DirOf $b) -Directory -Filter 'app-*' -ErrorAction SilentlyContinue)) {
+        $loader = Join-Path $app.FullName 'resources\app\index.js'
+        try { if ((Test-Path $loader) -and ((Get-Content $loader -Raw -ErrorAction Stop) -match 'patcher\.js')) { $loader } } catch { }
+    }
 }
-function IsSeparate($b) { [bool](Loaders $b | Where-Object { (Get-Content $_ -Raw) -match 'LUMICORD_PROFILE' }) }
+function IsSeparate($b) {
+    foreach ($loader in @(Loaders $b)) { try { if ((Get-Content $loader -Raw -ErrorAction Stop) -match 'LUMICORD_PROFILE') { return $true } } catch { } }
+    $false
+}
 
 # ---------- install logic ----------
 # Downloads the release's files to a temp folder. Done BEFORE closing Discord, so a failed download leaves Discord alone.
 function Fetch {
-    $script:tmp = Join-Path $env:TEMP "lumicord-$([guid]::NewGuid())"
-    New-Item -ItemType Directory $tmp | Out-Null
     $ref = if ($ver -like 'v*') { "refs/tags/$ver" } else { 'refs/heads/main' }
-    Invoke-WebRequest "https://codeload.github.com/v1nx0/lumicord/zip/$ref" -OutFile "$tmp\src.zip" -UseBasicParsing
-    Expand-Archive "$tmp\src.zip" $tmp
-    (Get-ChildItem $tmp -Directory | Select-Object -First 1).FullName
+    try {
+        Invoke-WebRequest "https://codeload.github.com/v1nx0/lumicord/zip/$ref" -OutFile "$tmp\src.zip" -UseBasicParsing -TimeoutSec 30
+        Expand-Archive "$tmp\src.zip" $tmp -ErrorAction Stop
+        $root = Get-ChildItem $tmp -Directory | Select-Object -First 1
+        if (-not $root -or -not (Test-Path (Join-Path $root.FullName 'src\patcher.js'))) { throw 'The downloaded archive is incomplete.' }
+        $root.FullName
+    } catch {
+        throw 'Could not download Lumicord. Check your connection and try again.'
+    }
 }
 # src/, vencord/, version.json are replaced; the user's plugins and themes are kept.
 function CopyFiles($srcRoot) {
     $files = @(Get-Item "$srcRoot\version.json") +
-        @(Get-ChildItem "$srcRoot\src" -Filter *.js) + @(Get-ChildItem "$srcRoot\plugins" -Filter *.js -ErrorAction SilentlyContinue) +
-        @(Get-ChildItem "$srcRoot\themes" -Filter *.css -ErrorAction SilentlyContinue) +
-        @(Get-ChildItem "$srcRoot\vencord" -File | Where-Object { $_.Extension -in '.js', '.css', '.txt' -or $_.Name -eq 'LICENSE' })
+        @(Get-ChildItem "$srcRoot\src" -File -Recurse) + @(Get-ChildItem "$srcRoot\plugins" -File -Recurse -ErrorAction SilentlyContinue) +
+        @(Get-ChildItem "$srcRoot\themes" -File -Recurse -ErrorAction SilentlyContinue) +
+        @(Get-ChildItem "$srcRoot\vencord" -File -Recurse)
     foreach ($f in $files) {
         $rel = $f.FullName.Substring($srcRoot.Length + 1)
         $dest = Join-Path $data $rel
@@ -271,8 +285,10 @@ LUMICORD LICENSE AGREEMENT (last updated November 2026). By installing or using 
     $verb = @{ install = 'Installing'; repair = 'Repairing'; uninstall = 'Uninstalling' }[$action]
     Screen 4 $verb 'This may take a moment.'
     if ($action -ne 'uninstall') {
-        $srcRoot = Fetch
-        try { $n = CopyFiles $srcRoot; Done "Downloaded Lumicord $ver ($n files)" } finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
+        # $tmp lives in this block (not $script:), so it never leaks into the caller's session under irm | iex.
+        $tmp = Join-Path $env:TEMP "lumicord-$([guid]::NewGuid())"; New-Item -ItemType Directory $tmp | Out-Null
+        try { $srcRoot = Fetch; $n = CopyFiles $srcRoot; Done "Downloaded Lumicord $ver ($n files)" }
+        finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
     foreach ($b in $targets) { Work $action $b $(if ($quick) { IsSeparate $b } else { $separate }) }
     Write-Host ''
@@ -280,8 +296,12 @@ LUMICORD LICENSE AGREEMENT (last updated November 2026). By installing or using 
     P $(if ($action -eq 'uninstall') { '  Lumicord was removed. Your plugins, themes and settings are kept.' } else { '  Lumicord is ready. Open Discord and find Lumicord in User Settings.' }) muted
     Write-Host ''
 } catch {
+    $message = $_.Exception.Message
+    if ($message.Length -gt 120) { $message = 'Operation failed. Close Discord and try again.' }
     Write-Host ''
-    P "  $($_.Exception.Message)" err
+    P "  $message" err
     Write-Host ''
+} finally {
+    [Net.ServicePointManager]::SecurityProtocol = $oldSecurityProtocol
 }
 }
