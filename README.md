@@ -1,5 +1,7 @@
 # Lumicord
 
+[![Bitcoin](https://img.shields.io/badge/Bitcoin-donate-f7931a?logo=bitcoin&logoColor=white)](#donate) [![Solana](https://img.shields.io/badge/Solana-donate-9945ff?logo=solana&logoColor=white)](#donate)
+
 A tiny Discord desktop client mod, written from scratch.
 
 Join the community: https://discord.gg/jFSshXPhRW
