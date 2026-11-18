@@ -8,6 +8,10 @@ Join the community: https://discord.gg/jFSshXPhRW
 
 > Client mods break Discord's Terms of Service. Use at your own risk.
 
+![Lumicord installer](screenshots/installer.png)
+
+![Plugins page](screenshots/plugins.png)
+
 ## Install
 1. Quit Discord completely (also from the tray).
 2. `node install.js`
