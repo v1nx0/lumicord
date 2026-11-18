@@ -33,3 +33,9 @@ Any `.css` in `themes/`, including BetterDiscord `.theme.css` files. Get them fr
 Browses and installs plugins and themes from the public BetterDiscord catalog.
 
 Settings live in `settings.json`, plugin data in `data/`. Press Ctrl+R in Discord to reload.
+
+## Donate
+Lumicord is free. If you want to support it:
+
+- **Bitcoin:** `bc1q0csyzscm725lu4vwf5tsxwg5vr32pgjujtpnh8`
+- **Solana:** `HMmUu1qFiWqfHiW5DMvUix5Ai9THvnC6VRwYLRM8zbbs`
