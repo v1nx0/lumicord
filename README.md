@@ -11,13 +11,13 @@ Join the community: https://discord.gg/jFSshXPhRW
 ![Plugins page](screenshots/plugins.png)
 
 ## Install
-**One command** (PowerShell, Windows):
+**One command** (PowerShell, Windows, no download needed):
 ```powershell
 irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
 ```
-It downloads the latest installer and installs into Discord. Repair after a Discord update: run `$env:LUMICORD_ACTION="repair"` first. PTB/Canary: `$env:LUMICORD_DISCORD="ptb"`.
+Repair after a Discord update: run `$env:LUMICORD_ACTION="repair"` first (or `"uninstall"`). PTB/Canary: `$env:LUMICORD_DISCORD="ptb"`.
 
-Or download `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord/releases/latest).
+Or use `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord/releases/latest).
 
 **From source:**
 1. Quit Discord completely (also from the tray).
