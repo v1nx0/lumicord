@@ -1,25 +1,86 @@
 # Lumicord command-line installer. No .exe needed.
 #   irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
-# Options (set before running): $env:LUMICORD_ACTION = install | repair | uninstall
-#                               $env:LUMICORD_DISCORD = discord | ptb | canary
+# Interactive like the .exe: license, action, Discord version. Skip prompts with $env:LUMICORD_ACCEPT=1,
+# $env:LUMICORD_ACTION = install|repair|uninstall and $env:LUMICORD_DISCORD = discord|ptb|canary.
 # Mirrors Work() in installer/Installer.cs; keep the two in sync.
 $ErrorActionPreference = 'Stop'
 $ProgressPreference = 'SilentlyContinue'
-$action = if ($env:LUMICORD_ACTION) { $env:LUMICORD_ACTION.ToLower() } else { 'install' }
-$build = switch (($env:LUMICORD_DISCORD + '').ToLower()) { 'ptb' { 'DiscordPTB' } 'canary' { 'DiscordCanary' } default { 'Discord' } }
-if ($action -notin 'install', 'repair', 'uninstall') { throw "LUMICORD_ACTION must be install, repair or uninstall" }
+$builds = [ordered]@{ Discord = 'Discord'; DiscordPTB = 'Discord PTB'; DiscordCanary = 'Discord Canary' }
 $data = Join-Path $env:APPDATA 'Lumicord'
-$root = if ($env:LUMICORD_DISCORD_DIR) { $env:LUMICORD_DISCORD_DIR } else { Join-Path $env:LOCALAPPDATA $build }
-
 function Say($m) { Write-Host "  $m" }
-Write-Host "Lumicord $action ($build)" -ForegroundColor Magenta
+# Newest app-x.y.z\resources of a Discord folder, like FindResourcesIn. $null if not installed.
+function FindRes($dir) {
+    $app = Get-ChildItem $dir -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
+        Where-Object { (Test-Path (Join-Path $_.FullName 'resources')) -and ($_.Name.Substring(4).Split('-')[0] -as [version]) } |
+        Sort-Object { [version]$_.Name.Substring(4).Split('-')[0] } | Select-Object -Last 1
+    if ($app) { Join-Path $app.FullName 'resources' }
+}
+function DirOf($b) { if ($env:LUMICORD_DISCORD_DIR) { $env:LUMICORD_DISCORD_DIR } else { Join-Path $env:LOCALAPPDATA $b } }
 
-# Newest app-x.y.z\resources, like FindResourcesIn.
-$app = Get-ChildItem $root -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
-    Where-Object { (Test-Path (Join-Path $_.FullName 'resources')) -and ($_.Name.Substring(4).Split('-')[0] -as [version]) } |
-    Sort-Object { [version]$_.Name.Substring(4).Split('-')[0] } | Select-Object -Last 1
-if (-not $app) { throw "$build not found in $root" }
-$res = Join-Path $app.FullName 'resources'
+# Arrow-key menu (Up/Down, Enter). Falls back to typing a number when input is not a real console.
+function Menu($title, $items) {
+    Write-Host ""; Write-Host "  $title" -ForegroundColor White
+    $live = $true; try { [void][Console]::KeyAvailable } catch { $live = $false }
+    if (-not $live -or [Console]::IsInputRedirected) {
+        for ($i = 0; $i -lt $items.Count; $i++) { Write-Host "   $($i + 1)) $($items[$i])" }
+        while ($true) { $n = (Read-Host "  Choose 1-$($items.Count)") -as [int]; if ($n -ge 1 -and $n -le $items.Count) { return $n - 1 } }
+    }
+    $sel = 0; $top = [Console]::CursorTop; [Console]::CursorVisible = $false
+    try {
+        while ($true) {
+            [Console]::SetCursorPosition(0, $top)
+            for ($i = 0; $i -lt $items.Count; $i++) {
+                if ($i -eq $sel) { Write-Host ("   > " + $items[$i]).PadRight(60) -ForegroundColor Magenta }
+                else { Write-Host ("     " + $items[$i]).PadRight(60) -ForegroundColor Gray }
+            }
+            $k = [Console]::ReadKey($true).Key
+            if ($k -eq 'UpArrow') { $sel = ($sel - 1 + $items.Count) % $items.Count }
+            elseif ($k -eq 'DownArrow') { $sel = ($sel + 1) % $items.Count }
+            elseif ($k -eq 'Enter') { return $sel }
+        }
+    } finally { [Console]::CursorVisible = $true }
+}
+
+Write-Host ""
+Write-Host "  Lumicord Installer" -ForegroundColor Magenta
+Write-Host "  A better Discord experience, made simple." -ForegroundColor DarkGray
+
+$action = if ($env:LUMICORD_ACTION) { $env:LUMICORD_ACTION.ToLower() } else { $null }
+if ($env:LUMICORD_ACCEPT -ne '1') {
+    Write-Host ""
+    Write-Host @'
+LUMICORD LICENSE AGREEMENT  (Last updated: November 2026)
+
+By installing or using Lumicord you agree to these terms. If you do not agree, do not install Lumicord.
+
+1. LICENSE - Lumicord is free and open source software under the GNU GPL v3 (https://www.gnu.org/licenses/gpl-3.0.html). Source: https://github.com/v1nx0/lumicord
+2. NO AFFILIATION - Lumicord is not made, endorsed or supported by Discord Inc., Vencord or BetterDiscord. "Discord" is a trademark of Discord Inc.
+3. DISCORD TERMS OF SERVICE - Modifying the Discord client is against Discord's Terms of Service. Discord may limit, suspend or ban accounts that use client mods. You use Lumicord entirely at your own risk.
+4. PLUGINS AND THEMES - Plugins run inside Discord with the same access as Discord, including your account and messages. Only install plugins and themes you trust.
+5. WHAT CHANGES ON YOUR COMPUTER - The selected Discord installation is modified so Lumicord loads, and files are stored in %APPDATA%\Lumicord. Discord updates may remove Lumicord; run this again and choose Repair. Uninstall restores Discord and keeps your plugins, themes and settings.
+6. NETWORK AND PRIVACY - Lumicord does not collect or send your personal data. It only connects to GitHub for signed updates, to betterdiscord.app for the Marketplace, and to addresses installed plugins request.
+7. THIRD-PARTY COMPONENTS - Vencord (GPL-3.0), included. BetterDiscord's plugin API (Apache-2.0) is reimplemented. Each keeps its own license.
+8. NO WARRANTY - Lumicord is provided "as is", without warranty of any kind. See sections 15 and 16 of the GPL-3.0.
+9. LIMITATION OF LIABILITY - The authors are not liable for any damages, data loss or account actions from using Lumicord, its plugins or themes.
+10. CHANGES - New versions may update this agreement. Continuing to use Lumicord after an update means you accept the updated terms.
+'@ -ForegroundColor Gray
+    if ((Menu 'Do you accept the license agreement?' @('I accept', 'I do not accept')) -ne 0) { Write-Host "  Cancelled. Nothing was changed."; return }
+}
+if (-not $action) { $action = @('install', 'repair', 'uninstall')[(Menu 'What do you want to do?' @('Install Lumicord', 'Repair (after a Discord update)', 'Uninstall'))] }
+if ($action -notin 'install', 'repair', 'uninstall') { throw "LUMICORD_ACTION must be install, repair or uninstall" }
+
+if ($env:LUMICORD_DISCORD) {
+    $build = switch ($env:LUMICORD_DISCORD.ToLower()) { 'ptb' { 'DiscordPTB' } 'canary' { 'DiscordCanary' } default { 'Discord' } }
+} else {
+    $found = @($builds.Keys | Where-Object { FindRes (DirOf $_) })
+    if (-not $found) { throw 'No Discord installation found.' }
+    $build = if ($found.Count -eq 1) { $found[0] } else { $found[(Menu 'Which Discord?' @($found | ForEach-Object { $builds[$_] }))] }
+}
+$res = FindRes (DirOf $build)
+if (-not $res) { throw "$($builds[$build]) not found" }
+Write-Host ""
+Write-Host "  $((Get-Culture).TextInfo.ToTitleCase($action))ing Lumicord for $($builds[$build])..." -ForegroundColor Magenta
+
 Say "Discord: $res"
 
 $procs = Get-Process -Name $build -ErrorAction SilentlyContinue

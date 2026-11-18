@@ -11,7 +11,7 @@ Join the community: https://discord.gg/jFSshXPhRW
 ![Plugins page](screenshots/plugins.png)
 
 ## Install
-**One command** (PowerShell, Windows, no download needed):
+**One command** (PowerShell, Windows, no download needed). It walks you through the license, Install/Repair/Uninstall and your Discord version with the arrow keys:
 ```powershell
 irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
 ```
