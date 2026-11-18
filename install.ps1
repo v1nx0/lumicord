@@ -135,7 +135,11 @@ function StartDiscord($build, $res) {
     $exe = Join-Path (Split-Path $res) "$build.exe"
     foreach ($try in @(@($update, "--processStart `"$build.exe`""), @($exe, $null))) {
         if (-not (Test-Path $try[0])) { continue }
-        if ($try[1]) { Start-Process -FilePath $try[0] -ArgumentList $try[1] } else { Start-Process -FilePath $try[0] }
+        # Start through WMI so Discord is not a child of this PowerShell window: closing the window
+        # (or Windows Terminal ending the tab's process tree) used to close Discord right after install.
+        $cmd = "`"$($try[0])`"" + $(if ($try[1]) { " $($try[1])" } else { '' })
+        $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{ CommandLine = $cmd; CurrentDirectory = (Split-Path $try[0]) }
+        if ($r.ReturnValue -ne 0) { if ($try[1]) { Start-Process -FilePath $try[0] -ArgumentList $try[1] } else { Start-Process -FilePath $try[0] } }
         for ($i = 0; $i -lt 40; $i++) { Start-Sleep -Milliseconds 250; if (Get-Process -Name $build -ErrorAction SilentlyContinue) { Done "Started $($builds[$build])"; return } }
     }
     P "  Could not start $($builds[$build]). Open it from the Start menu." err
