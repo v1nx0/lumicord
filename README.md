@@ -1,6 +1,6 @@
 # Lumicord
 
-[![Bitcoin](https://img.shields.io/badge/Bitcoin-donate-f7931a?logo=bitcoin&logoColor=white)](#donate) [![Solana](https://img.shields.io/badge/Solana-donate-9945ff?logo=solana&logoColor=white)](#donate)
+[![Bitcoin](https://img.shields.io/badge/Bitcoin-donate-f7931a?logo=bitcoin&logoColor=white)](#donate) [![Solana](https://img.shields.io/badge/Solana-donate-9945ff?logo=solana&logoColor=white)](#donate) [![Discord](https://img.shields.io/badge/Discord-join-5865f2?logo=discord&logoColor=white)](https://discord.gg/jFSshXPhRW)
 
 A tiny Discord desktop client mod, written from scratch.
 
