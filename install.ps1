@@ -40,6 +40,7 @@ function Menu($title, $items) {
                 if ($line.Length -gt $w) { $line = $line.Substring(0, $w) }   # never wrap, wrapping also duplicates
                 Write-Host $line.PadRight($w) -ForegroundColor $(if ($i -eq $sel) { 'Magenta' } else { 'Gray' })
             }
+            $top = [Console]::CursorTop - $n   # re-anchor after every draw, so any scroll can never shift the menu
             $k = [Console]::ReadKey($true).Key
             if ($k -eq 'UpArrow') { $sel = ($sel - 1 + $n) % $n }
             elseif ($k -eq 'DownArrow') { $sel = ($sel + 1) % $n }
