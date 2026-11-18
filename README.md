@@ -11,6 +11,15 @@ Join the community: https://discord.gg/jFSshXPhRW
 ![Plugins page](screenshots/plugins.png)
 
 ## Install
+**One command** (PowerShell, Windows):
+```powershell
+irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
+```
+It downloads the latest installer and installs into Discord. Repair after a Discord update: run `$env:LUMICORD_ACTION="repair"` first. PTB/Canary: `$env:LUMICORD_DISCORD="ptb"`.
+
+Or download `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord/releases/latest).
+
+**From source:**
 1. Quit Discord completely (also from the tray).
 2. `node install.js`
 3. Open Discord, press **Ctrl+Shift+L** for the Lumicord panel.

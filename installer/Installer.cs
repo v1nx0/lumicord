@@ -1160,10 +1160,22 @@ class Wizard : Form {
         }
     }
 
+    [System.Runtime.InteropServices.DllImport("kernel32.dll")] static extern bool AttachConsole(int pid);
+    // LumicordInstaller.exe --cli install|repair|uninstall [discord|ptb|canary]   (used by install.ps1)
+    static int Cli(string[] args) {
+        AttachConsole(-1); Console.WriteLine();
+        string a = args[1].ToLowerInvariant(), b = args.Length > 2 ? args[2].ToLowerInvariant() : "discord";
+        string folder = b == "ptb" ? "DiscordPTB" : b == "canary" ? "DiscordCanary" : b == "discord" ? "Discord" : null;
+        if (folder == null || (a != "install" && a != "repair" && a != "uninstall")) { Console.WriteLine("Usage: LumicordInstaller.exe --cli install|repair|uninstall [discord|ptb|canary]"); return 2; }
+        try { Work(a, folder, null, false, Console.WriteLine); Console.WriteLine(a == "uninstall" ? "Lumicord was removed." : "Done. Lumicord is in Discord's User Settings."); return 0; }
+        catch (Exception ex) { Console.WriteLine("Failed: " + ex.Message); return 1; }
+    }
+
     [STAThread]
     static void Main(string[] args) {
         Application.EnableVisualStyles();
         Application.SetCompatibleTextRenderingDefault(false);
+        if (args != null && args.Length >= 2 && args[0] == "--cli") { Environment.Exit(Cli(args)); return; }
         if (args != null && args.Length == 2 && args[0] == "--shots") {
             using (var wizard = new Wizard()) wizard.SaveShots(Path.GetFullPath(args[1]));
             return;
