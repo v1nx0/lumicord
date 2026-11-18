@@ -1,7 +1,7 @@
 # Lumicord command-line installer. No .exe needed.
 #   irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
 # Interactive like the .exe: license, action, Discord version (arrow keys, Enter, Esc cancels). Skip prompts with $env:LUMICORD_ACCEPT=1,
-# $env:LUMICORD_ACTION = install|repair|uninstall and $env:LUMICORD_DISCORD = discord|ptb|canary.
+# $env:LUMICORD_ACTION = install|repair|uninstall, $env:LUMICORD_DISCORD = discord|ptb|canary, $env:LUMICORD_SEPARATE = 1|0.
 # Mirrors Work() in installer/Installer.cs; keep the two in sync.
 & {
 [Net.ServicePointManager]::SecurityProtocol = [Net.ServicePointManager]::SecurityProtocol -bor [Net.SecurityProtocolType]::Tls12
@@ -88,6 +88,16 @@ if ($env:LUMICORD_DISCORD) {
 }
 $res = FindRes (DirOf $build)
 if (-not $res) { throw "$($builds[$build]) not found" }
+# "Don't share plugins and themes with other Discord versions" (same as the .exe's checkbox).
+# Repair keeps whatever the existing loader used, in any app-* folder.
+$separate = $false
+if ($action -ne 'uninstall') {
+    $old = Get-ChildItem (Split-Path $res | Split-Path) -Directory -Filter 'app-*' -ErrorAction SilentlyContinue |
+        ForEach-Object { Join-Path $_.FullName 'resources\app\index.js' } | Where-Object { Test-Path $_ }
+    if ($env:LUMICORD_SEPARATE) { $separate = $env:LUMICORD_SEPARATE -eq '1' }
+    elseif ($action -eq 'repair' -and $old) { $separate = [bool]($old | Where-Object { (Get-Content $_ -Raw) -match 'LUMICORD_PROFILE' }) }
+    else { $separate = (Menu 'Plugins and themes' @('Share with other Discord versions', "Don't share (separate for $($builds[$build]))")) -eq 1 }
+}
 Write-Host ""
 Write-Host "  $((Get-Culture).TextInfo.ToTitleCase($action))ing Lumicord for $($builds[$build])..." -ForegroundColor Magenta
 
@@ -135,8 +145,9 @@ if ($action -eq 'uninstall') {
         $enc = New-Object System.Text.UTF8Encoding $false
         [IO.File]::WriteAllText((Join-Path $appDir 'package.json'), '{"name":"discord","main":"index.js"}', $enc)
         $patcher = (Join-Path $data 'src\patcher.js').Replace('\', '\\')
-        [IO.File]::WriteAllText((Join-Path $appDir 'index.js'), "require(`"$patcher`");`n", $enc)
-        Say 'Wrote loader'
+        $profileLine = if ($separate) { "process.env.LUMICORD_PROFILE = `"$build`";`n" } else { '' }
+        [IO.File]::WriteAllText((Join-Path $appDir 'index.js'), "$profileLine" + "require(`"$patcher`");`n", $enc)
+        Say $(if ($separate) { "Wrote loader (separate plugins and themes for $build)" } else { 'Wrote loader' })
         if (-not (Test-Path $orig)) { Move-Item $asar $orig; Say 'Renamed app.asar -> _app.asar' }
     } catch {
         if (-not (Test-Path $orig)) { Remove-Item $appDir -Recurse -Force -ErrorAction SilentlyContinue }
