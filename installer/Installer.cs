@@ -7,8 +7,10 @@ using System.Drawing;
 using System.Drawing.Drawing2D;
 using System.IO;
 using System.Linq;
+using System.Net;
 using System.Reflection;
 using System.Runtime.InteropServices;
+using System.Security.Cryptography;
 using System.Threading.Tasks;
 using System.Windows.Forms;
 
@@ -600,6 +602,7 @@ class Wizard : Form {
 
         Anim.Tick += OnAnimationTick;
         Show(0);
+        QueueLauncherUpdate();
     }
 
     void OnAnimationTick() {
@@ -1175,6 +1178,41 @@ class Wizard : Form {
             Marshal.ReleaseComObject(link);
         } finally { Marshal.ReleaseComObject(shell); }
         say("Added \"Lumicord Installer\" to the Start menu");
+    }
+
+    // The installed copy checks only Lumicord's published release manifest.  The new executable is
+    // hash-checked before it is staged; a tiny hidden helper replaces it after this process exits.
+    static void QueueLauncherUpdate() {
+        var self = Assembly.GetExecutingAssembly().Location;
+        var kept = Path.Combine(DataDir, "LumicordInstaller.exe");
+        if (!string.Equals(Path.GetFullPath(self), Path.GetFullPath(kept), StringComparison.OrdinalIgnoreCase)) return;
+        Task.Factory.StartNew(() => {
+            string staged = Path.Combine(DataDir, "LumicordInstaller.pending.exe");
+            try {
+                using (var web = new WebClient()) {
+                    web.Headers.Add("User-Agent", "Lumicord-Installer");
+                    var json = web.DownloadString("https://github.com/v1nx0/lumicord/releases/latest/download/lumicord-launcher-update.json");
+                    var versionMatch = System.Text.RegularExpressions.Regex.Match(json, "\\\"version\\\"\\s*:\\s*\\\"(\\d+\\.\\d+\\.\\d+)\\\"");
+                    var urlMatch = System.Text.RegularExpressions.Regex.Match(json, "\\\"installer\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
+                    var hashMatch = System.Text.RegularExpressions.Regex.Match(json, "\\\"sha256\\\"\\s*:\\s*\\\"([a-fA-F0-9]{64})\\\"");
+                    if (!versionMatch.Success || !urlMatch.Success || !hashMatch.Success) return;
+                    Version latest, current;
+                    if (!Version.TryParse(versionMatch.Groups[1].Value, out latest) || !Version.TryParse(version, out current) || latest <= current) return;
+                    var url = urlMatch.Groups[1].Value;
+                    var expectedUrl = "https://github.com/v1nx0/lumicord/releases/download/v" + versionMatch.Groups[1].Value + "/LumicordInstaller.exe";
+                    if (!string.Equals(url, expectedUrl, StringComparison.Ordinal)) return;
+                    if (File.Exists(staged)) File.Delete(staged);
+                    web.DownloadFile(url, staged);
+                    string actual;
+                    using (var sha = SHA256.Create()) using (var stream = File.OpenRead(staged)) actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                    if (!string.Equals(actual, hashMatch.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) { File.Delete(staged); return; }
+                    var script = Path.Combine(DataDir, "LumicordInstaller-update.cmd");
+                    var pid = Process.GetCurrentProcess().Id;
+                    File.WriteAllText(script, "@echo off\r\n:wait\r\ntasklist /FI \"PID eq " + pid + "\" /NH | find \"" + pid + "\" >nul\r\nif not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\nmove /Y \"" + staged + "\" \"" + kept + "\" >nul\r\ndel \"%~f0\"\r\n");
+                    Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
+                }
+            } catch { try { if (File.Exists(staged)) File.Delete(staged); } catch { } }
+        });
     }
 
     static void RemoveStartMenuEntry(Action<string> say) {

@@ -35,7 +35,13 @@ const signature = crypto.sign(null, Buffer.from(signedText), fs.readFileSync(key
 fs.writeFileSync(path.join(dist, "lumicord-update.json"), JSON.stringify({ version, files, signature }));
 execSync(`"${path.join(root, "installer", "build.cmd")}"`, { stdio: "inherit", shell: true });
 fs.copyFileSync(path.join(root, "LumicordInstaller.exe"), path.join(dist, "LumicordInstaller.exe"));
+const installer = fs.readFileSync(path.join(dist, "LumicordInstaller.exe"));
+fs.writeFileSync(path.join(dist, "lumicord-launcher-update.json"), JSON.stringify({
+    version,
+    installer: `https://github.com/v1nx0/lumicord/releases/download/v${version}/LumicordInstaller.exe`,
+    sha256: crypto.createHash("sha256").update(installer).digest("hex")
+}, null, 2) + "\n");
 
 console.log(`\nLumicord v${version} is ready in dist/ (${list.length} files in the update).`);
-console.log(`Publish: create a GitHub release with tag v${version} and attach both files in dist/.`);
-console.log(`With the GitHub CLI: gh release create v${version} dist/lumicord-update.json dist/LumicordInstaller.exe --title "Lumicord v${version}" --notes "What changed..."`);
+console.log(`Publish: create a GitHub release with tag v${version} and attach all three files in dist/.`);
+console.log(`With the GitHub CLI: gh release create v${version} dist/lumicord-update.json dist/lumicord-launcher-update.json dist/LumicordInstaller.exe --title "Lumicord v${version}" --notes "What changed..."`);

@@ -17,7 +17,7 @@ irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
 ```
 The installer can repair every detected Discord edition at once and keeps those selections repaired automatically after Discord updates. You can still run `$env:LUMICORD_ACTION="repair"` (or `"uninstall"`) manually. PTB/Canary: `$env:LUMICORD_DISCORD="ptb"`.
 
-Or use `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord/releases/latest).
+Or use `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord/releases/latest). After the installer has been installed once, its Start-menu copy checks the published release for a newer launcher and safely replaces itself when it closes.
 
 **From source:**
 1. Quit Discord completely (also from the tray).
