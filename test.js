@@ -3,6 +3,16 @@ const assert = require("assert");
 const fs = require("fs"), os = require("os"), path = require("path"), vm = require("vm");
 const { findResources, install, uninstall } = require("./install");
 
+// Required launcher updates cannot be skipped, and every failure path offers an explicit retry.
+{
+    const installer = fs.readFileSync(path.join(__dirname, "installer", "Installer.cs"), "utf8");
+    assert.ok(installer.includes('new Notice("Launcher update required", message, button'), "required launcher update uses a blocking notice");
+    assert.ok(installer.includes('"Update now"'), "required launcher update has an explicit action");
+    assert.ok(!installer.includes('"Later"'), "launcher updates do not offer a skip action");
+    assert.ok((installer.match(/"Retry"/g) || []).length >= 4, "all launcher update failures offer retry");
+    console.log("launcher update prompt test passed");
+}
+
 // Local-access management lists and forgets remembered choices without granting access.
 {
     const patcher = fs.readFileSync(path.join(__dirname, "src", "patcher.js"), "utf8");

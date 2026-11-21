@@ -552,6 +552,7 @@ class Wizard : Form {
     readonly FlatButton next = new FlatButton("Next");
     IconButton site, code, heart;
     Label launcherUpdateStatus;
+    bool launcherUpdateChecking = true;
 
     static readonly string[,] Builds = { { "Discord", "Discord" }, { "DiscordPTB", "Discord PTB" }, { "DiscordCanary", "Discord Canary" } };
     static string Local { get { return Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData); } }
@@ -603,7 +604,7 @@ class Wizard : Form {
 
         Anim.Tick += OnAnimationTick;
         Show(0);
-        QueueLauncherUpdate(SetLauncherUpdateStatus, () => BeginInvoke(new Action(Close)));
+        QueueLauncherUpdate(SetLauncherUpdateStatus, ShowRequiredLauncherUpdate, () => BeginInvoke(new Action(Close)));
     }
 
     void OnAnimationTick() {
@@ -707,7 +708,7 @@ class Wizard : Form {
         body = new Canvas { Size = viewport.Size, BackColor = Theme.Bg, Left = 12 * slideDir };
         viewport.Controls.Add(body);
         slideStart = Anim.Now; welcomeLogo = false;
-        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started  \u2192" : "Next"; next.Enabled = true; next.Width = s == 0 ? 140 : 96; next.Left = W - 24 - next.Width;
+        back.Visible = s > 0 && s < 4; next.Text = s == 0 ? "Get started  \u2192" : "Next"; next.Enabled = !(s == 0 && launcherUpdateChecking); next.Width = s == 0 ? 140 : 96; next.Left = W - 24 - next.Width;
         for (int i = 0; i < 5; i++) if (i < s && doneAt[i] < 0) doneAt[i] = Anim.Now + (i == s - 1 ? 0 : -1); // only the step just finished pops
         if (s == 0) Welcome(); else if (s == 1) License(); else if (s == 2) Actions(); else if (s == 3) Channels(); else RunInstall();
         StartEntrance();
@@ -767,7 +768,7 @@ class Wizard : Form {
         else { var mark = new Canvas { Location = new Point(32,94), Size = new Size(62,62), BackColor = Theme.Bg }; mark.Paint += (o,e) => Icons.Draw(e.Graphics,"sparkle",new RectangleF(8,8,46,46),Theme.Accent); body.Controls.Add(mark); }
         var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
         body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
-        launcherUpdateStatus = new Label { Text = "Launcher: checking for required updates…", Font = Theme.F(8.5f), ForeColor = Theme.Muted, Location = new Point(33, 231), Size = new Size(520, 18), AutoEllipsis = true };
+        launcherUpdateStatus = new Label { Text = "Checking required launcher update…", Font = Theme.F(11, FontStyle.Bold), ForeColor = Theme.Accent, Location = new Point(33, 231), Size = new Size(520, 22), AutoEllipsis = true };
         body.Controls.Add(launcherUpdateStatus);
         string[] text = { "BetterDiscord plugins & themes", "Built-in Marketplace", "Signed automatic updates" }; string[] icon = { "puzzle", "store", "shield" };
         var found = RepairTargets();
@@ -784,6 +785,23 @@ class Wizard : Form {
         if (IsDisposed) return;
         if (InvokeRequired) { try { BeginInvoke(new Action<string>(SetLauncherUpdateStatus), text); } catch { } return; }
         if (launcherUpdateStatus != null && !launcherUpdateStatus.IsDisposed) launcherUpdateStatus.Text = text;
+        if (text.IndexOf("up to date", StringComparison.OrdinalIgnoreCase) >= 0) {
+            launcherUpdateChecking = false;
+            if (step == 0) next.Enabled = true;
+        }
+    }
+
+    // A newer launcher is mandatory, but the user explicitly starts it with this one action.
+    // There is intentionally no Later/Skip path and the wizard remains blocked behind the panel.
+    void ShowRequiredLauncherUpdate(string message, string button, Action action) {
+        if (IsDisposed) return;
+        if (InvokeRequired) { try { BeginInvoke(new Action<string, string, Action>(ShowRequiredLauncherUpdate), message, button, action); } catch { } return; }
+        Notice n = null;
+        n = new Notice("Launcher update required", message, button, () => {
+            viewport.Controls.Remove(n); n.Dispose(); action();
+        });
+        n.Bounds = viewport.ClientRectangle;
+        viewport.Controls.Add(n); viewport.Controls.SetChildIndex(n, 0); n.BringToFront(); n.Show(); n.Focus();
     }
 
     // Credits: an in-window panel over the current step (not a Windows message box), with clickable links.
@@ -1192,7 +1210,7 @@ class Wizard : Form {
 
     // The installed copy checks only Lumicord's published release manifest.  The new executable is
     // hash-checked before it is staged; a tiny hidden helper replaces it after this process exits.
-    static void QueueLauncherUpdate(Action<string> report, Action restart) {
+    static void QueueLauncherUpdate(Action<string> report, Action<string, string, Action> confirm, Action restart) {
         var self = Assembly.GetExecutingAssembly().Location;
         var kept = Path.Combine(DataDir, "LumicordInstaller.exe");
         if (!string.Equals(Path.GetFullPath(self), Path.GetFullPath(kept), StringComparison.OrdinalIgnoreCase)) return;
@@ -1208,26 +1226,31 @@ class Wizard : Form {
                     var versionMatch = System.Text.RegularExpressions.Regex.Match(json, "\\\"version\\\"\\s*:\\s*\\\"(\\d+\\.\\d+\\.\\d+)\\\"");
                     var urlMatch = System.Text.RegularExpressions.Regex.Match(json, "\\\"installer\\\"\\s*:\\s*\\\"([^\\\"]+)\\\"");
                     var hashMatch = System.Text.RegularExpressions.Regex.Match(json, "\\\"sha256\\\"\\s*:\\s*\\\"([a-fA-F0-9]{64})\\\"");
-                    if (!versionMatch.Success || !urlMatch.Success || !hashMatch.Success) { report("Launcher: update information is invalid."); return; }
+                    if (!versionMatch.Success || !urlMatch.Success || !hashMatch.Success) { report("Launcher: update information is invalid."); confirm("Update information could not be verified. Check your connection and click Retry.", "Retry", () => QueueLauncherUpdate(report, confirm, restart)); return; }
                     Version latest, current;
                     if (!Version.TryParse(versionMatch.Groups[1].Value, out latest) || !Version.TryParse(version, out current) || latest <= current) { report("Launcher: up to date (v" + version + ")."); return; }
                     var url = urlMatch.Groups[1].Value;
                     var expectedUrl = "https://github.com/v1nx0/lumicord/releases/download/v" + versionMatch.Groups[1].Value + "/LumicordInstaller.exe";
-                    if (!string.Equals(url, expectedUrl, StringComparison.Ordinal)) { report("Launcher: update source was rejected."); return; }
-                    report("Launcher: downloading required v" + latest + " update…");
-                    if (File.Exists(staged)) File.Delete(staged);
-                    web.DownloadFile(url, staged);
-                    string actual;
-                    using (var sha = SHA256.Create()) using (var stream = File.OpenRead(staged)) actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
-                    if (!string.Equals(actual, hashMatch.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) { File.Delete(staged); report("Launcher: update integrity check failed."); return; }
-                    var script = Path.Combine(DataDir, "LumicordInstaller-update.cmd");
-                    var pid = Process.GetCurrentProcess().Id;
-                    File.WriteAllText(script, "@echo off\r\n:wait\r\ntasklist /FI \"PID eq " + pid + "\" /NH | find \"" + pid + "\" >nul\r\nif not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\nmove /Y \"" + staged + "\" \"" + kept + "\" >nul || (del \"%~f0\" & exit /b 1)\r\nstart \"\" \"" + kept + "\"\r\ndel \"%~f0\"\r\n");
-                    Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
-                    report("Launcher: v" + latest + " verified. Restarting to install it…");
-                    restart();
+                    if (!string.Equals(url, expectedUrl, StringComparison.Ordinal)) { report("Launcher: update source was rejected."); confirm("The update source was rejected. Check your connection and click Retry.", "Retry", () => QueueLauncherUpdate(report, confirm, restart)); return; }
+                    report("Launcher: v" + latest + " is required.");
+                    confirm("Version " + latest + " is required before you can continue. Click Update now to download and restart Lumicord.", "Update now", () => Task.Factory.StartNew(() => {
+                        try {
+                            report("Launcher: downloading required v" + latest + " update…");
+                            if (File.Exists(staged)) File.Delete(staged);
+                            using (var download = new WebClient()) { download.Headers.Add("User-Agent", "Lumicord-Installer"); download.DownloadFile(url, staged); }
+                            string actual;
+                            using (var sha = SHA256.Create()) using (var stream = File.OpenRead(staged)) actual = BitConverter.ToString(sha.ComputeHash(stream)).Replace("-", "").ToLowerInvariant();
+                            if (!string.Equals(actual, hashMatch.Groups[1].Value, StringComparison.OrdinalIgnoreCase)) { File.Delete(staged); report("Launcher: update integrity check failed."); confirm("The downloaded update did not pass verification. Click Retry to download it again.", "Retry", () => QueueLauncherUpdate(report, confirm, restart)); return; }
+                            var script = Path.Combine(DataDir, "LumicordInstaller-update.cmd");
+                            var pid = Process.GetCurrentProcess().Id;
+                            File.WriteAllText(script, "@echo off\r\n:wait\r\ntasklist /FI \"PID eq " + pid + "\" /NH | find \"" + pid + "\" >nul\r\nif not errorlevel 1 (timeout /t 1 /nobreak >nul & goto wait)\r\nmove /Y \"" + staged + "\" \"" + kept + "\" >nul || (del \"%~f0\" & exit /b 1)\r\nstart \"\" \"" + kept + "\"\r\ndel \"%~f0\"\r\n");
+                            Process.Start(new ProcessStartInfo("cmd.exe", "/c \"" + script + "\"") { UseShellExecute = false, CreateNoWindow = true, WindowStyle = ProcessWindowStyle.Hidden });
+                            report("Launcher: v" + latest + " verified. Restarting to install it…");
+                            restart();
+                        } catch { try { if (File.Exists(staged)) File.Delete(staged); } catch { } report("Launcher: update failed."); confirm("Lumicord could not download the required update. Check your connection and click Retry.", "Retry", () => QueueLauncherUpdate(report, confirm, restart)); }
+                    }));
                 }
-            } catch { try { if (File.Exists(staged)) File.Delete(staged); } catch { } report("Launcher: could not check for updates."); }
+            } catch { try { if (File.Exists(staged)) File.Delete(staged); } catch { } report("Launcher: could not check for updates."); confirm("Lumicord could not check for updates. Check your connection and click Retry.", "Retry", () => QueueLauncherUpdate(report, confirm, restart)); }
         });
     }
 
