@@ -126,9 +126,9 @@ function Fetch {
         throw 'Could not download Lumicord. Check your connection and try again.'
     }
 }
-# src/, vencord/, version.json are replaced; the user's plugins and themes are kept.
+# src/, vencord/, watch.ps1, watch.vbs and version.json are replaced; the user's plugins and themes are kept.
 function CopyFiles($srcRoot) {
-    $files = @(Get-Item "$srcRoot\version.json") +
+    $files = @(Get-Item "$srcRoot\version.json"), @(Get-Item "$srcRoot\watch.ps1"), @(Get-Item "$srcRoot\watch.vbs") +
         @(Get-ChildItem "$srcRoot\src" -File -Recurse) + @(Get-ChildItem "$srcRoot\plugins" -File -Recurse -ErrorAction SilentlyContinue) +
         @(Get-ChildItem "$srcRoot\themes" -File -Recurse -ErrorAction SilentlyContinue) +
         @(Get-ChildItem "$srcRoot\vencord" -File -Recurse)
@@ -202,6 +202,25 @@ function Work($action, $build, $separate) {
         elseif ($closed -or $action -ne 'uninstall') { StartDiscord $build $res }
     }
 }
+function SetAutoRepair($build, $separate, $enabled) {
+    try {
+        New-Item -ItemType Directory -Force $data | Out-Null
+        $file = Join-Path $data 'auto-repair.txt'
+        $entries = if (Test-Path $file) { @(Get-Content $file | Where-Object { $_ -and -not $_.StartsWith("$build|", [StringComparison]::OrdinalIgnoreCase) }) } else { @() }
+        if ($enabled) { $entries += "$build|$(if ($separate) { '1' } else { '0' })" }
+        if ($entries.Count) {
+            Set-Content -Path $file -Value $entries -Encoding UTF8
+            $watch = Join-Path $data 'watch.vbs'
+            $taskCmd = 'wscript.exe "' + $watch + '"'
+            & schtasks.exe /Create /TN 'Lumicord Update Repair' /TR $taskCmd /SC MINUTE /MO 1 /F | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Task Scheduler rejected the automatic repair task.' }
+        } else {
+            Remove-Item $file -Force -ErrorAction SilentlyContinue
+            & schtasks.exe /Delete /TN 'Lumicord Update Repair' /F 2>$null | Out-Null
+            if ($LASTEXITCODE -ne 0) { throw 'Task Scheduler could not remove the automatic repair task.' }
+        }
+    } catch { return "Automatic update repair was not configured: $($_.Exception.Message)" }
+}
 
 try {
     $ver = 'main'
@@ -209,7 +228,7 @@ try {
 
     $action = if ($env:LUMICORD_ACTION) { $env:LUMICORD_ACTION.ToLower() } else { $null }
     if ($action -and $action -notin 'install', 'repair', 'uninstall') { throw 'LUMICORD_ACTION must be install, repair or uninstall.' }
-    $installed = @($builds.Keys | Where-Object { Loaders $_ })
+    $installed = @($builds.Keys | Where-Object { FindRes (DirOf $_) })
     $targets = $null; $quick = $false
 
     # 1. Welcome
@@ -219,7 +238,7 @@ try {
         P "  $($G.dot) " accent -NoNewline; P 'Built-in Marketplace' text
         P "  $($G.dot) " accent -NoNewline; P 'Signed automatic updates' text
         $opts = @("Get started $($G.arrow)")
-        if ($installed) { $opts += "Repair in one click  ($(($installed | ForEach-Object { $builds[$_] }) -join ', '))" }
+        if ($installed) { $opts += "Repair all installed Discord  ($(($installed | ForEach-Object { $builds[$_] }) -join ', '))" }
         $opts += 'Quit'
         $pick = $opts[(Menu $opts)]
         if ($pick -eq 'Quit') { throw 'Cancelled. Nothing was changed.' }
@@ -235,7 +254,7 @@ LUMICORD LICENSE AGREEMENT (last updated November 2026). By installing or using 
 2. NO AFFILIATION - Not made, endorsed or supported by Discord Inc., Vencord or BetterDiscord. "Discord" is a trademark of Discord Inc.
 3. DISCORD TERMS OF SERVICE - Modifying the Discord client is against Discord's Terms of Service. Discord may limit, suspend or ban accounts that use client mods. You use Lumicord entirely at your own risk.
 4. PLUGINS AND THEMES - Plugins run inside Discord with the same access as Discord, including your account and messages. Only install plugins and themes you trust.
-5. WHAT CHANGES ON YOUR COMPUTER - The selected Discord is modified so Lumicord loads; files are stored in %APPDATA%\Lumicord. Discord updates may remove Lumicord; run this again and choose Repair. Uninstall restores Discord and keeps your plugins, themes and settings.
+5. WHAT CHANGES ON YOUR COMPUTER - The selected Discord is modified so Lumicord loads; files are stored in %APPDATA%\Lumicord. The installer schedules a small once-per-minute update check to restore Lumicord after Discord updates. Uninstall restores Discord and keeps your plugins, themes and settings.
 6. NETWORK AND PRIVACY - Lumicord does not collect or send your personal data. It only connects to GitHub for signed updates, betterdiscord.app for the Marketplace, and addresses installed plugins request.
 7. THIRD-PARTY COMPONENTS - Vencord (GPL-3.0), included. BetterDiscord's plugin API (Apache-2.0), reimplemented. Each keeps its own license.
 8. NO WARRANTY - Provided "as is", without warranty of any kind. See sections 15 and 16 of the GPL-3.0.
@@ -290,10 +309,21 @@ LUMICORD LICENSE AGREEMENT (last updated November 2026). By installing or using 
         try { $srcRoot = Fetch; $n = CopyFiles $srcRoot; Done "Downloaded Lumicord $ver ($n files)" }
         finally { Remove-Item $tmp -Recurse -Force -ErrorAction SilentlyContinue }
     }
-    foreach ($b in $targets) { Work $action $b $(if ($quick) { IsSeparate $b } else { $separate }) }
+    $failed = @()
+    foreach ($b in $targets) {
+        $targetSeparate = if ($quick) { IsSeparate $b } else { $separate }
+        try {
+            Work $action $b $targetSeparate
+            $autoRepairWarning = SetAutoRepair $b $targetSeparate ($action -ne 'uninstall')
+            if ($autoRepairWarning) { P "  $autoRepairWarning" err }
+        } catch {
+            $failed += $builds[$b]
+            P "  $($builds[$b]) was not changed: $($_.Exception.Message)" err
+        }
+    }
     Write-Host ''
-    P $(if ($action -eq 'uninstall') { '  Uninstalled' } else { '  Installed' }) accent -Bold
-    P $(if ($action -eq 'uninstall') { '  Lumicord was removed. Your plugins, themes and settings are kept.' } else { '  Lumicord is ready. Open Discord and find Lumicord in User Settings.' }) muted
+    P $(if ($failed.Count) { '  Completed with errors' } elseif ($action -eq 'uninstall') { '  Uninstalled' } else { '  Installed' }) accent -Bold
+    P $(if ($failed.Count) { "  Could not process: $($failed -join ', '). Other Discord editions were still processed." } elseif ($action -eq 'uninstall') { '  Lumicord was removed. Your plugins, themes and settings are kept.' } else { '  Lumicord is ready. Open Discord and find Lumicord in User Settings.' }) muted
     Write-Host ''
 } catch {
     $message = $_.Exception.Message

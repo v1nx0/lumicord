@@ -764,12 +764,12 @@ class Wizard : Form {
         var title = new Label { Text = "Welcome to Lumicord", Font = Theme.F(21, FontStyle.Bold), ForeColor = Theme.Text, Location = new Point(30, 166), AutoSize = true }; body.Controls.Add(title);
         body.Controls.Add(new Label { Text = "A better Discord experience, made simple.", Font = Theme.F(11), ForeColor = Theme.Muted, Location = new Point(33, 212), AutoSize = true });
         string[] text = { "BetterDiscord plugins & themes", "Built-in Marketplace", "Signed automatic updates" }; string[] icon = { "puzzle", "store", "shield" };
-        var found = Installed();
+        var found = RepairTargets();
         if (found.Count > 0) {
-            var fix = new FlatButton("Repair in one click", BtnStyle.Outline) { Location = new Point(32, 360), Size = new Size(180, 34), BackColor = Theme.Bg };
+            var fix = new FlatButton("Repair all installed Discord", BtnStyle.Outline) { Location = new Point(32, 360), Size = new Size(220, 34), BackColor = Theme.Bg };
             fix.Click += (o, e) => { action = "repair"; quickRepair = found; Show(4); };
             body.Controls.Add(fix);
-            body.Controls.Add(new Label { Text = "Broken after a Discord update? Repairs " + string.Join(", ", found.Select(f => f[1])) + ".", Font = Theme.F(9), ForeColor = Theme.Muted, Location = new Point(32, 402), AutoSize = true });
+            body.Controls.Add(new Label { Text = "Repairs every detected Discord edition and keeps it repaired after updates.", Font = Theme.F(9), ForeColor = Theme.Muted, Location = new Point(32, 402), AutoSize = true });
         }
         for (int i=0;i<3;i++) { int y=254+i*34; var row = new Canvas { Location=new Point(32,y), Size=new Size(290,28), BackColor=Theme.Bg }; int n=i; row.Paint += (o,e) => { Icons.Draw(e.Graphics,icon[n],new RectangleF(2,5,18,18),Theme.Accent); Theme.Draw(e.Graphics,text[n],Theme.F(10.5f),new RectangleF(32,1,310,26),Theme.Text,StringAlignment.Near,StringAlignment.Center); }; body.Controls.Add(row); }
     }
@@ -855,7 +855,7 @@ class Wizard : Form {
                    "5. WHAT LUMICORD CHANGES ON YOUR COMPUTER\r\n" +
                    "The installer modifies the selected Discord installation so Lumicord loads when Discord starts, and stores its files in:\r\n" +
                    "    " + DataDir + "\r\n" +
-                   "Discord updates may remove Lumicord; run this installer again and choose Repair. Uninstall restores Discord and keeps your plugins, themes and settings.\r\n" +
+                   "A small scheduled update check restores Lumicord after Discord updates. Uninstall restores Discord and keeps your plugins, themes and settings.\r\n" +
                    "\r\n" +
                    "6. NETWORK AND PRIVACY\r\n" +
                    "Lumicord does not collect, sell or send your personal data to its authors. It connects to the internet only to:\r\n" +
@@ -954,8 +954,14 @@ class Wizard : Form {
         Task.Run(() => {
             bool ok = true;
             try {
-                if (targets != null) foreach (var t in targets) Work("repair", t[0], null, t[2] == "1", say);
-                else Work(a, ch, custom, sep, say); say(""); say(a == "uninstall" ? "Lumicord was removed." : "Done. Open Discord and find Lumicord in User Settings."); }
+                if (targets != null) {
+                    foreach (var t in targets) {
+                        try { Work("repair", t[0], null, t[2] == "1", say); }
+                        catch (Exception ex) { ok = false; say(t[1] + " was not changed: " + ex.Message); }
+                    }
+                } else Work(a, ch, custom, sep, say);
+                say(""); say(ok ? (a == "uninstall" ? "Lumicord was removed." : "Done. Open Discord and find Lumicord in User Settings.") : "Some Discord editions could not be processed; see the details.");
+            }
             catch (Exception ex) { ok = false; say(""); say("Failed: " + ex.Message); }
             BeginInvoke((Action)(() => {
                 installing = false;
@@ -1043,18 +1049,17 @@ class Wizard : Form {
     }
 
     // dir = a Discord install folder (contains app-x.y.z). Returns the newest version's resources folder.
-    // One-click repair: Discord builds that had Lumicord in ANY app-* version (a Discord update makes a new app-*
-    // folder without our loader). Returns { folder, display name, "1" if it used a separate profile }.
-    // shortcut: custom-folder installs aren't detected; they still repair through the normal wizard.
+    // One-click repair targets every detected standard Discord edition. The profile is retained when a previous
+    // Lumicord loader requested one. shortcut: custom-folder installs still repair through the normal wizard.
     List<string[]> quickRepair;
-    static List<string[]> Installed() {
+    static List<string[]> RepairTargets() {
         var list = new List<string[]>();
         for (int i = 0; i < Builds.GetLength(0); i++) {
             var dir = Path.Combine(Local, Builds[i, 0]);
             if (!Directory.Exists(dir)) continue;
             try {
                 var loaders = Directory.GetDirectories(dir, "app-*").Select(d => Path.Combine(d, "resources", "app", "index.js")).Where(File.Exists).Select(File.ReadAllText).Where(t => t.Contains("patcher.js")).ToList();
-                if (loaders.Count > 0) list.Add(new[] { Builds[i, 0], Builds[i, 1], loaders.Any(t => t.Contains("LUMICORD_PROFILE")) ? "1" : "0" });
+                if (FindResourcesIn(dir) != null) list.Add(new[] { Builds[i, 0], Builds[i, 1], loaders.Any(t => t.Contains("LUMICORD_PROFILE")) ? "1" : "0" });
             } catch { }
         }
         return list;
@@ -1107,8 +1112,11 @@ class Wizard : Form {
             }
         }
 
+        var taskWarning = customDir == null ? UpdateAutoRepair(folder, separate, action != "uninstall") : null;
+        if (taskWarning != null) say(taskWarning);
+
         // Start menu entry, so Windows search finds "Lumicord Installer". Failing here never fails the install.
-        try { if (action == "uninstall") RemoveStartMenuEntry(say); else AddStartMenuEntry(say); }
+        try { if (action == "uninstall" && !File.Exists(AutoRepairFile)) RemoveStartMenuEntry(say); else if (action != "uninstall") AddStartMenuEntry(say); }
         catch (Exception e) { say("Start menu shortcut skipped: " + e.Message); }
 
         var update = Path.Combine(Path.GetDirectoryName(Path.GetDirectoryName(res)), "Update.exe");
@@ -1117,6 +1125,32 @@ class Wizard : Form {
 
     static string StartMenuShortcut {
         get { return Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.Programs), "Lumicord Installer.lnk"); }
+    }
+
+    static readonly string AutoRepairFile = Path.Combine(DataDir, "auto-repair.txt");
+    // Task Scheduler starts a one-shot check every minute, avoiding a permanent background PowerShell process.
+    static string UpdateAutoRepair(string folder, bool separate, bool enabled) {
+        try {
+            Directory.CreateDirectory(DataDir);
+            var entries = File.Exists(AutoRepairFile) ? File.ReadAllLines(AutoRepairFile).Where(x => x.Length > 0 && !x.StartsWith(folder + "|", StringComparison.OrdinalIgnoreCase)).ToList() : new List<string>();
+            if (enabled) entries.Add(folder + "|" + (separate ? "1" : "0"));
+            if (entries.Count == 0) {
+                if (File.Exists(AutoRepairFile)) File.Delete(AutoRepairFile);
+                RunTask("/Delete /TN \"Lumicord Update Repair\" /F");
+            } else {
+                File.WriteAllLines(AutoRepairFile, entries);
+                var watch = Path.Combine(DataDir, "watch.vbs");
+                RunTask("/Create /TN \"Lumicord Update Repair\" /TR \"wscript.exe \\\"" + watch + "\\\"\" /SC MINUTE /MO 1 /F");
+            }
+            return null;
+        } catch (Exception e) { return "Automatic update repair was not configured: " + e.Message; }
+    }
+    static void RunTask(string args) {
+        using (var p = Process.Start(new ProcessStartInfo("schtasks.exe", args) { UseShellExecute = false, CreateNoWindow = true })) {
+            if (p == null) throw new Exception("Task Scheduler could not be started.");
+            if (!p.WaitForExit(5000)) throw new Exception("Task Scheduler timed out.");
+            if (p.ExitCode != 0) throw new Exception("Task Scheduler returned " + p.ExitCode + ".");
+        }
     }
 
     // Copies this installer into %APPDATA%\Lumicord (so the shortcut still works after the download is deleted)

@@ -15,7 +15,7 @@ Join the community: https://discord.gg/jFSshXPhRW
 ```powershell
 irm https://raw.githubusercontent.com/v1nx0/lumicord/main/install.ps1 | iex
 ```
-Repair after a Discord update: run `$env:LUMICORD_ACTION="repair"` first (or `"uninstall"`). PTB/Canary: `$env:LUMICORD_DISCORD="ptb"`.
+The installer can repair every detected Discord edition at once and keeps those selections repaired automatically after Discord updates. You can still run `$env:LUMICORD_ACTION="repair"` (or `"uninstall"`) manually. PTB/Canary: `$env:LUMICORD_DISCORD="ptb"`.
 
 Or use `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord/releases/latest).
 
@@ -24,7 +24,7 @@ Or use `LumicordInstaller.exe` from [Releases](https://github.com/v1nx0/lumicord
 2. `node install.js`
 3. Open Discord, press **Ctrl+Shift+L** for the Lumicord panel.
 
-Uninstall: `node install.js uninstall`. Discord updates undo the install, so run it again after one.
+Uninstall: `node install.js uninstall`. The source-only Node installer does not create the automatic repair task.
 
 ## Where to find it
 Open Discord **User Settings**: a **Lumicord** section (Plugins, Themes, Marketplace) is added to the sidebar.
