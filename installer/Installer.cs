@@ -1199,6 +1199,7 @@ class Wizard : Form {
         Task.Factory.StartNew(() => {
             string staged = Path.Combine(DataDir, "LumicordInstaller.pending.exe");
             try {
+                ServicePointManager.SecurityProtocol |= SecurityProtocolType.Tls12;
                 File.WriteAllText(Path.Combine(DataDir, "launcher-version.txt"), version);
                 report("Launcher: checking for required updates…");
                 using (var web = new WebClient()) {
