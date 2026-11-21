@@ -138,6 +138,24 @@ async function checkUpdate() {
     };
 }
 
+// Launcher updates use their own tiny manifest because the installer is an EXE, not a Lumicord JS file.
+// The launcher itself checks the exact download URL and SHA-256 before replacing anything.
+async function checkLauncherUpdate() {
+    let current = "0.0.0";
+    try { const saved = fs.readFileSync(path.join(root, "launcher-version.txt"), "utf8").trim(); if (/^\d+\.\d+\.\d+$/.test(saved)) current = saved; } catch { }
+    const { repo } = versionInfo();
+    if (!/^[\w.\-]+\/[\w.\-]+$/.test(repo)) throw new Error("Bad repo in version.json");
+    const r = await githubRelease(repo, "latest");
+    if (r.status !== 200) return { current, available: false };
+    const rel = JSON.parse(r.body.toString("utf8")), latest = String(rel.tag_name || "").replace(/^v/, "");
+    const asset = (rel.assets || []).find(a => a.name === "lumicord-launcher-update.json");
+    if (!asset || !newer(latest, current)) return { current, latest, available: false };
+    const manifest = JSON.parse((await get(asset.browser_download_url)).body.toString("utf8"));
+    const installer = `https://github.com/${repo}/releases/download/v${latest}/LumicordInstaller.exe`;
+    if (manifest.version !== latest || manifest.installer !== installer || !/^[a-f0-9]{64}$/i.test(manifest.sha256 || "")) throw new Error("Launcher update information is invalid");
+    return { current, latest, available: true };
+}
+
 async function githubRelease(repo, tag) {
     return request(`https://api.github.com/repos/${repo}/releases/${tag}`, { headers: { Accept: "application/vnd.github+json" } });
 }
@@ -205,6 +223,8 @@ const gate = o => {
 if (isDiscord()) contextBridge.exposeInMainWorld("LumicordNative", gate({
     version: () => versionInfo().version,
     checkUpdate,
+    checkLauncherUpdate,
+    updateLauncher: async () => { const error = await shell.openPath(path.join(root, "LumicordInstaller.exe")); if (error) throw new Error(error); return true; },
     releaseNotes,
     applyUpdate,
     folders: { plugin: dirs.plugin, theme: dirs.theme, data: dataDir },

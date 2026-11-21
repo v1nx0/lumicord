@@ -1436,8 +1436,22 @@
         offeredVersion = i.latest;
         showUpdateCard(i);
     }, e => log("update check failed:", e.message));
+    let offeredLauncherVersion = null;
+    const autoCheckLauncher = () => N.checkLauncherUpdate().then(i => {
+        if (!i.available || i.latest === offeredLauncherVersion) return;
+        offeredLauncherVersion = i.latest;
+        const old = document.querySelector(".lumi-launcher-update-card"); if (old) old.remove();
+        const status = h("div", { class: "lumi-uc-status" }, "Opening the launcher. The verified update installs automatically.");
+        const card = h("div", { class: "lumi-update-card lumi-launcher-update-card" },
+            h("div", { class: "lumi-uc-head" }, h("div", { class: "lumi-uc-icon" }, svg("update", 18)), h("div", null,
+                h("div", { class: "lumi-uc-title" }, "Required launcher update"),
+                h("div", { class: "lumi-uc-ver" }, h("span", null, "v" + i.current), h("span", { class: "lumi-uc-arrow" }, "→"), h("b", null, "v" + i.latest)))),
+            h("div", { class: "lumi-uc-notes" }, "Lumicord is updating its installer now. There is no skip option; it verifies the download before replacing the launcher."), status);
+        document.body.append(card);
+        N.updateLauncher().then(() => { status.textContent = "Launcher opened. It will restart itself after the verified update is ready."; }, e => { status.textContent = "Could not open the launcher: " + e.message; card.classList.add("lumi-uc-error"); });
+    }, e => log("launcher update check failed:", e.message));
     const custom = () => { const c = N.getSettings().custom; return c && typeof c === "object" && !Array.isArray(c) ? c : {}; };
-    const autoCheckIfOn = () => { if (custom().autoUpdate !== false) autoCheck(); };
+    const autoCheckIfOn = () => { if (custom().autoUpdate !== false) autoCheck(); autoCheckLauncher(); };
     let autoCheckTimer;
     const scheduleAutoCheck = () => {
         clearInterval(autoCheckTimer);
